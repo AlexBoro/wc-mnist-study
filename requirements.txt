@@ -1,0 +1,18 @@
+# WC-MNIST longitudinal-study harness — dependencies.
+# Colab ships everything except gudhi (which is needed only for topology
+# persistence; the code degrades gracefully without it).  Versions are minimums
+# known to work; the harness was developed against torch 2.5.1 (CPU, local) and
+# runs on Colab's newer CUDA torch.
+
+numpy>=1.24
+scipy>=1.10            # connectivity (scipy.sparse) + Hessian eigsh (scipy.sparse.linalg)
+torch>=2.0            # COO sparse-dense autograd path (see wc_model._get_sparse_matrix)
+torchvision>=0.15     # MNIST download/loading only
+pandas>=2.0
+pyarrow>=13           # metrics.parquet (CSV mirror is always written as fallback)
+matplotlib>=3.5       # figures + plot_trajectories (lazy-imported, Agg backend)
+
+# Optional — topology persistence (domain/Hessian saddle + persistence metrics).
+# Without it, those fields are recorded as null; loss-grid stats + eigenvalues
+# are still computed. Install on Colab with: pip install gudhi
+gudhi>=3.7

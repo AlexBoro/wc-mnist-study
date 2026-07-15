@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local MNIST data & test outputs — never commit these
+mnist_data/
+wc_data/
+wc_smoke_*/
+wc_resume_*/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
