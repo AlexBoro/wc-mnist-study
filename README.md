@@ -31,6 +31,7 @@ plumbing and orchestration changed. See "Model fidelity" below.
 | `smoke_test.py` | **A3** schema/files/figures + **A4** resume identity. |
 | `timing_calibration.py` | **A5** per-epoch timing → 100-epoch × {15,60}-run projection. |
 | `RUN_WC_MNIST_STUDY.ipynb` | Colab notebook — runnable cells (mount, **pull code from GitHub**, trial, timing, training pass, deferred topology pass, resume, combine) with inline instructions. The recommended way to run on Colab; Step 3 clones this repo so code isn't uploaded to Drive. |
+| `RUN_TRAINING_BATCH.ipynb` | **Lean** launch/resume notebook for the 100-epoch training pass only — GPU on, pull pinned code (`REF` tag), set `START_SEED`/`N_SETS`, launch, resume after timeout. Gate/trial/timing/topology/analysis stay in the full notebook. |
 
 ---
 

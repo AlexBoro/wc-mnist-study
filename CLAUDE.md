@@ -1,8 +1,9 @@
 # CLAUDE.md — WC-MNIST longitudinal study harness
 
 Context for Claude Code. Authoritative design = `WC_MNIST_longitudinal_study_ENGINEERING_SPEC.md`.
-Runner notebook = `RUN_WC_MNIST_STUDY.ipynb` (Colab). Do NOT change model dynamics
-(acceptance test A2 enforces this).
+Runner notebooks = `RUN_WC_MNIST_STUDY.ipynb` (full: gate/trial/timing/train/topology/
+analysis) and `RUN_TRAINING_BATCH.ipynb` (lean launch+resume for the batch). Do NOT
+change model dynamics (acceptance test A2 enforces this).
 
 ## Code sync — GitHub, not Drive (as of 14 Jul 2026)
 
@@ -13,8 +14,11 @@ Drive** — only results do (`MyDrive/WC_MNIST_Longitudinal/`). Per-change loop:
 commit locally → push (GitHub Desktop "Push origin") → any Colab tab re-runs Step 3 to
 pick it up. The v82 `.ipynb` (A2's reference) is tracked in the repo, so it clones
 automatically — no separate upload. Pin `REF` to a tag before a batch so parallel
-sessions run identical code. Verified end-to-end on Colab 14 Jul 2026. See memory
-`wc-mnist-git-sync-plan`.
+sessions run identical code — the 100-epoch batch is pinned as annotated tag
+**`run-2026-07`** (commit 7246e3c), which the lean `RUN_TRAINING_BATCH.ipynb` defaults
+to. Verified end-to-end on Colab 14 Jul 2026. NOTE: GitHub Desktop pushes commits but
+**not** CLI-created tags — push new tags directly (`git push origin <tag>`) or via
+Repository → Push. See memory `wc-mnist-git-sync-plan`.
 
 ## Pre-run review (2 Jul 2026) — status before committing to Steps 7 & 8
 
@@ -87,11 +91,11 @@ per-epoch readout, NOT bit-identical to the original training window. Notebook
 
 **Rollout status.** Code sync is now via git (see "Code sync" above): the reworked
 `wc_figures.py` + notebook are committed and on GitHub, so Colab gets them by re-running
-Step 3 — no manual `.py` upload. STILL PENDING: runs that *already completed* on Drive
-with the old figure code need **Step 11** (`regenerate_figures`) on Colab to re-render
-with the new figures; that hasn't been run yet. During testing, one run
-(`seed000__sequential_noH`) was regenerated in the *local download snapshot* only
-(and with the pre-ring grid electrodes) — not the authoritative Drive results.
+Step 3 — no manual `.py` upload. **Step 11 (`regenerate_figures`) is running on Colab
+(15 Jul)** to re-render already-completed runs with the new figures; the new ring-window
+`lfp_focus.png` was **eyeballed on real output and looks good** (spec §17 focus-electrode
+check satisfied). Let Step 11 finish so every completed run's figures match the current
+code before relying on the figure set.
 
 ## Notes
 - Two-phase workflow (train with topology deferred → Step 8b measures topology
