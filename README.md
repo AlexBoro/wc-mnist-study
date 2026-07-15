@@ -30,7 +30,7 @@ plumbing and orchestration changed. See "Model fidelity" below.
 | `model_diff_check.py` | **A2** ported math == notebook cell 14 / cell 7. |
 | `smoke_test.py` | **A3** schema/files/figures + **A4** resume identity. |
 | `timing_calibration.py` | **A5** per-epoch timing → 100-epoch × {15,60}-run projection. |
-| `RUN_WC_MNIST_STUDY.ipynb` | Colab notebook — runnable cells (mount, setup, trial, timing, training pass, deferred topology pass, resume, combine) with inline instructions. The recommended way to run on Colab. |
+| `RUN_WC_MNIST_STUDY.ipynb` | Colab notebook — runnable cells (mount, **pull code from GitHub**, trial, timing, training pass, deferred topology pass, resume, combine) with inline instructions. The recommended way to run on Colab; Step 3 clones this repo so code isn't uploaded to Drive. |
 
 ---
 
@@ -50,6 +50,12 @@ MNIST is downloaded automatically to `$WC_DATA_ROOT` (default `./mnist_data`).
 ---
 
 ## Launch on Colab
+
+**Getting the code there:** the recommended path is `RUN_WC_MNIST_STUDY.ipynb`, whose
+Step 3 clones this repo from GitHub to `/content/wc_mnist_code` each session (read-only
+PAT in Colab secret `GH_PAT`) — code is **not** uploaded to Drive; only results are.
+Setup is one-time (see the notebook's Step 3; details in memory `wc-mnist-git-sync-plan`).
+The snippet below is the underlying programmatic call once the code is importable:
 
 ```python
 # one cell — mounts Drive, runs 5 sets (seeds 0..4) × 3 configs × 100 epochs

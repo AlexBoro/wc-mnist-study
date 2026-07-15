@@ -4,6 +4,18 @@ Context for Claude Code. Authoritative design = `WC_MNIST_longitudinal_study_ENG
 Runner notebook = `RUN_WC_MNIST_STUDY.ipynb` (Colab). Do NOT change model dynamics
 (acceptance test A2 enforces this).
 
+## Code sync — GitHub, not Drive (as of 14 Jul 2026)
+
+This folder is a **git repo** pushed to `github.com/AlexBoro/wc-mnist-study` (private).
+The notebook's **Step 3** clones / `reset --hard`s the repo to `/content/wc_mnist_code`
+each session (read-only PAT in Colab secret `GH_PAT`), so **code no longer lives on
+Drive** — only results do (`MyDrive/WC_MNIST_Longitudinal/`). Per-change loop: edit +
+commit locally → push (GitHub Desktop "Push origin") → any Colab tab re-runs Step 3 to
+pick it up. The v82 `.ipynb` (A2's reference) is tracked in the repo, so it clones
+automatically — no separate upload. Pin `REF` to a tag before a batch so parallel
+sessions run identical code. Verified end-to-end on Colab 14 Jul 2026. See memory
+`wc-mnist-git-sync-plan`.
+
 ## Pre-run review (2 Jul 2026) — status before committing to Steps 7 & 8
 
 Verified present and working:
@@ -22,9 +34,9 @@ Verified present and working:
    `model_diff_check.py` (line uncommented); the Step 5 markdown is relabeled
    **mandatory** and spells out that A2 needs the v82 `.ipynb`
    (`7_+S_-H_v82_..._v82.ipynb`) present in `CODE_DIR`, and cell-0's prerequisites
-   now list it. **Remaining human action:** upload that v82 `.ipynb` to
-   `MyDrive/wc_mnist_code/` (only the 13 `.py` files were there), else A2 prints
-   `ERROR: notebook not found`.
+   now list it. (**Resolved 14 Jul 2026:** the v82 `.ipynb` is tracked in the git
+   repo, so it clones into `CODE_DIR` automatically — no manual Drive upload; A2
+   finds it co-located.)
 
 2. **Epoch-0 topology tripwire implemented.** `wc_topology.measure_topology` gained
    a `first_measurement` param; on the first measurement it prints
@@ -73,9 +85,11 @@ re-simulates a frozen window (driven by the fixed eval subset) — a reproducibl
 per-epoch readout, NOT bit-identical to the original training window. Notebook
 **Step 11** runs it; default window = 10 s.
 
-**Rollout status — NOT done.** The updated `.py` files + notebook must be synced
-to `MyDrive/wc_mnist_code/`, then Step 11 run on Colab (GPU) to regenerate all
-runs. Claude can't reach Drive/Colab. During testing, one run
+**Rollout status.** Code sync is now via git (see "Code sync" above): the reworked
+`wc_figures.py` + notebook are committed and on GitHub, so Colab gets them by re-running
+Step 3 — no manual `.py` upload. STILL PENDING: runs that *already completed* on Drive
+with the old figure code need **Step 11** (`regenerate_figures`) on Colab to re-render
+with the new figures; that hasn't been run yet. During testing, one run
 (`seed000__sequential_noH`) was regenerated in the *local download snapshot* only
 (and with the pre-ring grid electrodes) — not the authoritative Drive results.
 
