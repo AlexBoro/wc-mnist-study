@@ -71,15 +71,28 @@ def run_dir(out_root, config_name, seed) -> Path:
 
 
 def is_complete(out_root, config_name, seed, expected_T=None) -> bool:
+    """Fast completion check for the resumable driver.
+
+    ``save_bundle`` writes arrays.npz -> params.json -> manifest.json (manifest
+    LAST), so all three existing is a sound "run finished" marker. The default
+    path is STAT-ONLY (three ``exists()`` metadata calls) — critically, it does
+    NOT open arrays.npz. Opening a multi-MB npz reads the zip central directory,
+    which over the Google Drive FUSE mount is a network round-trip PER RUN; doing
+    that 1500x (resume skip-scan or a completeness sweep) is what makes the naive
+    version crawl. Pass ``expected_T`` only when you want a deep integrity check
+    (opens the npz and verifies the E_traj row count).
+    """
     d = run_dir(out_root, config_name, seed)
     arr, par, man = d / "arrays.npz", d / "params.json", d / "manifest.json"
     if not (arr.exists() and par.exists() and man.exists()):
         return False
+    if expected_T is None:
+        return True
     try:
         with np.load(arr) as z:
             if "E_traj" not in z or "I_traj" not in z:
                 return False
-            if expected_T is not None and z["E_traj"].shape[0] != expected_T:
+            if z["E_traj"].shape[0] != expected_T:
                 return False
     except Exception:
         return False
