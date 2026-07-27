@@ -272,6 +272,17 @@ def save_lfp(E_window: np.ndarray, times: np.ndarray, path: str, dt: float,
     for ch in range(E_count):
         ax.plot(times, stacked[:, ch], lw=0.7)
 
+    # FIXED y-axis: a constant span centered on the electrode-ladder midpoint so
+    # the pixel-per-signal-unit scale is IDENTICAL on every epoch (no per-plot
+    # autoscale). This makes a fixed pixel-deflection threshold transferable and
+    # keeps flat epochs readable. Span 150 (calibrated 2026-07-25): flat & moderate
+    # seizures do not clip; only the extreme tips of the largest ictal peaks
+    # (ep47/ep99) truncate on the top/bottom electrodes — acceptable since those
+    # deflections are already unambiguously supra-threshold.
+    _ladder_mid = (E_count - 1) * 5.0 / 2.0
+    _span = 150.0
+    ax.set_ylim(_ladder_mid - _span / 2.0, _ladder_mid + _span / 2.0)
+
     # MNIST stimulus onset marks (needs ylim, so after plotting)
     if image_duration and len(times) > 1:
         stim = _stim_onsets_in_window(times[0], times[-1], image_duration, pulsed=pulsed)
