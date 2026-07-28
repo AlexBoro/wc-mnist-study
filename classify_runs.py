@@ -137,7 +137,8 @@ def _write_csv(csv_path, rows_by_id):
     os.replace(tmp, csv_path)
 
 
-def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=True):
+def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=True,
+        overrides=None):
     F, C = _load_toolkit(toolkit_dir)
     csv_path = Path(csv_path)
 
@@ -170,15 +171,37 @@ def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=Tr
                       f"missing_figs={missing}", flush=True)
 
     _write_csv(csv_path, rows)
-    # label histogram
+
+    # --- human-adjudication overrides: stamped as the final pass, after every
+    # auto label is written. Off by default -> a bare run gives the pristine
+    # auto-only master (the number to cite for raw detector agreement). With
+    # --overrides, the verified-label master used for downstream analysis.
+    ov_summary = None
+    if overrides:
+        try:
+            # apply_overrides.py sits next to this file at the repo root; make the
+            # import robust to the caller's cwd (the script is often run from a
+            # different directory so toolkit relative-imports resolve).
+            import sys as _sys, os as _os
+            _here = _os.path.dirname(_os.path.abspath(__file__))
+            if _here not in _sys.path:
+                _sys.path.insert(0, _here)
+            import apply_overrides as _AO
+            ov_summary = _AO.apply(str(csv_path), overrides, verbose=verbose)
+        except Exception as e:  # never let an override problem corrupt the auto master
+            print(f"WARNING: override pass failed ({e!r}); auto master is intact, "
+                  f"overrides NOT applied")
+
+    # label histogram (reflects overrides if applied)
     from collections import Counter
-    hist = Counter(int(r["label"]) for r in rows.values())
+    final_rows = {r["run_id"]: r for r in csv.DictReader(open(csv_path))}
+    hist = Counter(int(r["label"]) for r in final_rows.values())
     if verbose:
         print(f"DONE: {len(rows)} rows -> {csv_path.name} "
               f"(new={done}, skipped={skipped}, missing_figs={missing})")
         print("label histogram:", dict(sorted(hist.items())))
     return dict(total=len(rows), new=done, skipped=skipped,
-                missing_figs=missing, hist=dict(hist))
+                missing_figs=missing, hist=dict(hist), overrides=ov_summary)
 
 
 if __name__ == "__main__":
@@ -189,5 +212,10 @@ if __name__ == "__main__":
                     help="path to labeling_toolkit/ (features.py + classifier.py)")
     ap.add_argument("--csv", default="master_classification.csv")
     ap.add_argument("--force", action="store_true", help="re-classify all runs")
+    ap.add_argument("--overrides", default=None,
+                    help="human_overrides.csv ledger; when given, human verdicts "
+                         "are stamped onto the master as a final idempotent pass "
+                         "(see apply_overrides.py). Omit for the pristine auto-only master.")
     args = ap.parse_args()
-    run(args.out_root, args.toolkit, args.csv, force=args.force)
+    run(args.out_root, args.toolkit, args.csv, force=args.force,
+        overrides=args.overrides)
