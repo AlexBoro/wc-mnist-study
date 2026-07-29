@@ -26,9 +26,15 @@ WC rate model, and rendered blank; ``labeling_toolkit`` consumes the E heatmap
 from __future__ import annotations
 
 import os
+from math import gcd
+
 import numpy as np
 
 import wc_config as cfg
+
+# MNIST row length: images enter the ring as img.view(-1), so pixel (r, c) maps
+# to unit MNIST_ROW_LEN*r + c.  Used only to de-alias electrode placement.
+MNIST_ROW_LEN = 28
 
 FIG_TYPES = ("heatmap_E", "heatmap_I", "lfp", "lfp_focus")
 
@@ -99,10 +105,40 @@ def _ring_electrodes(num_cells: int, n_elec: int = 28):
     (Deviation from the notebook's 5x5 ``_select_torus_electrodes``, which imposed
     a 28x28 pixel-grid metric unrelated to the ring; see spec §12.)
 
+    Stride: uniform ring spacing at N=784, n_elec=28 gives stride exactly 28 --
+    which is also the image row length, since MNIST enters as ``img.view(-1)`` so
+    pixel (r, c) -> unit 28r + c.  The stride therefore ALIASES with the row
+    length and every electrode lands in image column 0:
+
+        units 0, 28, 56, ... 756  ->  pixels (0,0), (1,0), (2,0), ... (27,0)
+
+    Column 0 carries essentially no MNIST ink (mean occupancy ~0.000), so the
+    electrodes sat on the units receiving the least direct stimulus in the image.
+    Using stride 29 (coprime with 28) instead walks the electrodes diagonally
+    across the image, visiting a different column each row, so the sampled units
+    span the ink distribution rather than one empty edge.
+
+    This changes WHICH units are plotted, so LFP figures before and after are not
+    comparable and labels must be re-validated.  Ring spacing is preserved to
+    within one unit, so connectivity locality -- the thing the ring metric is for
+    -- is unaffected.
+
     Returns ``(linear_indices, labels)``.
     """
     n_elec = max(1, min(int(n_elec), int(num_cells)))
-    idx = (np.round(np.arange(n_elec) * (num_cells / n_elec)) % num_cells).astype(int)
+    stride = num_cells / n_elec
+    row_len = MNIST_ROW_LEN
+    de_alias = (num_cells % row_len == 0                       # ring indexes an image
+                and abs(stride - round(stride)) < 1e-9         # integer stride
+                and int(round(stride)) > 1
+                and gcd(int(round(stride)), row_len) != 1)     # and it aliases
+    if de_alias:
+        s = int(round(stride))
+        while gcd(s, row_len) != 1 and s < num_cells:
+            s += 1
+        idx = (np.arange(n_elec) * s % num_cells).astype(int)
+    else:
+        idx = (np.round(np.arange(n_elec) * stride) % num_cells).astype(int)
     idx = sorted(set(int(i) for i in idx))
     labels = [f"u{i:03d}" for i in idx]
     return idx, labels

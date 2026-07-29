@@ -451,3 +451,36 @@ if __name__ == "__main__":
             print(f"  ERROR {name}\n          {type(exc).__name__}: {exc}")
     print(f"\n{len(tests) - len(failures)}/{len(tests)} passed")
     raise SystemExit(1 if failures else 0)
+
+def test_lfp_electrodes_do_not_alias_onto_one_image_column():
+    """Electrode placement must sample the image, not one empty edge of it.
+
+    MNIST enters as ``img.view(-1)``, so pixel (r, c) -> unit 28r + c.  With
+    N=784 and 28 electrodes the uniform ring stride is exactly 28 -- the image
+    row length -- so the old placement aliased and put every electrode in image
+    column 0, which carries essentially no ink.  Stride 29 is coprime with 28,
+    so the electrodes walk diagonally and hit each row and each column once.
+
+    Ring spacing is what the electrode metric is FOR (see _ring_electrodes), so
+    this also checks the spacing stays uniform.
+    """
+    import wc_figures as FG
+    idx, labels = FG._ring_electrodes(784, 28)
+    assert len(idx) == 28, f"lost electrodes to de-duplication: {len(idx)}"
+    assert len(labels) == len(idx)
+
+    cols = {u % 28 for u in idx}
+    rows = {u // 28 for u in idx}
+    assert len(cols) == 28, (
+        f"electrodes span only {len(cols)} of 28 image columns -- placement "
+        f"aliases with the row length: {sorted(cols)}")
+    assert len(rows) == 28, f"electrodes span only {len(rows)} of 28 image rows"
+
+    gaps = set(np.diff(idx))
+    assert gaps == {29}, f"ring spacing is not uniform: {sorted(gaps)}"
+
+    # Degenerate shapes must not crash or collapse.
+    for N, n in ((784, 5), (100, 10), (50, 28), (7, 3), (1, 1)):
+        i2, l2 = FG._ring_electrodes(N, n)
+        assert i2 and len(i2) == len(l2), f"_ring_electrodes({N}, {n}) -> {i2}"
+        assert all(0 <= u < N for u in i2), f"index out of range for N={N}: {i2}"
