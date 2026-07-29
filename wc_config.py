@@ -66,8 +66,11 @@ BIAS_E_INIT_MIN, BIAS_E_INIT_MAX = -8.0, 0.0
 BIAS_I_INIT_MIN, BIAS_I_INIT_MAX = -12.0, 0.0
 MNIST_WEIGHT_MIN, MNIST_WEIGHT_MAX = -12.0, 13.0
 INH2PY_GAIN_MIN, INH2PY_GAIN_MAX = 12.0, 37.0
-CELOC_INIT_SCALE_MIN,  CELOC_INIT_SCALE_MAX  = -0.3, 1.5
-CEREM_INIT_SCALE_MIN,  CEREM_INIT_SCALE_MAX  = -0.4, 1.5
+# Widened and EQUALIZED (see the drive note under W_CELOC below).  Equal means
+# for the two E->E populations are half of what makes drive flat in p_rewire;
+# equal coefficients are the other half.
+CELOC_INIT_SCALE_MIN,  CELOC_INIT_SCALE_MAX  = -0.6, 3.0
+CEREM_INIT_SCALE_MIN,  CEREM_INIT_SCALE_MAX  = -0.6, 3.0
 CELOCI_INIT_SCALE_MIN, CELOCI_INIT_SCALE_MAX = -0.7, 1.5
 
 # =============================================================================
@@ -95,8 +98,23 @@ CELOCI_INIT_SCALE_MIN, CELOCI_INIT_SCALE_MAX = -0.7, 1.5
 # weight means make the slope exactly zero at every K, which is the flat
 # drive-vs-p that Branch B always had by construction.
 W_PY2PY_SELF = 10.0
-W_CELOC = 0.15
-W_CEREM = 0.05
+# Equal, and set to the value that reproduces Branch B's per-unit excitation:
+#   Branch B dealt a FULL ring into CeLoc AND another into CeRem (312 in-edges
+#   per unit at every p) so its drive was 10 + 156*0.15*0.600 + 156*0.05*0.550
+#   = 28.33, already flat in p.  Branch A has 156 in-edges, so matching that
+#   level needs 10 + 156*w*1.2 = 28.33 -> w = 0.0979; 0.10 gives 28.72 (1.014x).
+# The pilot brackets this with three arms: 0.075 (the CURRENT Branch A drive at
+# p->0, i.e. 'changed the tilt, nothing else'), 0.10 (Branch-B-matched), and
+# 0.15 (1.34x Branch B).  The study-wide default is the matched value.
+W_CELOC = 0.10
+W_CEREM = 0.10
+
+# The three pilot arms, so the notebook and the analysis agree on what they are.
+PILOT_COEFF_ARMS = {
+    "w075": 0.075,   # 24.04 = current Branch A drive at p->0 (0.849x Branch B)
+    "w100": 0.100,   # 28.72 = Branch-B-matched (1.014x)
+    "w150": 0.150,   # 38.08 = 1.344x Branch B
+}
 
 # Inhibitory coefficient of the LFP proxy only (wc_figures.save_lfp); the model
 # itself uses the learnable per-unit inh_to_exc_gain, not a fixed scalar.

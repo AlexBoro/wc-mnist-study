@@ -253,14 +253,18 @@ def test_different_seeds_give_different_wiring():
 def test_init_scale_ranges_straddle_zero():
     """All three scale ranges include negative values -- this is load-bearing.
 
-    A minority of nominally excitatory recurrent synapses initialize INHIBITORY:
-    16.7% of CeLoc, 21.1% of CeRem, 31.8% of CeLocI.  Several analyses assumed
-    strictly positive ranges and were wrong.  If these bounds change, mean edge
-    weight and therefore total drive change with them.
+    A minority of nominally excitatory recurrent synapses initialize INHIBITORY.
+    Several analyses assumed strictly positive ranges and were wrong.  If these
+    bounds change, mean edge weight and therefore total drive change with them.
+
+    The two E->E fractions are now both 1/6 by construction: the ranges were
+    equalized to U[-0.6, 3.0] so their means match, which is half of what makes
+    drive flat in p_rewire (equal coefficients are the other half).  CeLocI is
+    untouched at U[-0.7, 1.5].
     """
     for lo, hi, frac, name in (
         (cfg.CELOC_INIT_SCALE_MIN, cfg.CELOC_INIT_SCALE_MAX, 0.167, "CeLoc"),
-        (cfg.CEREM_INIT_SCALE_MIN, cfg.CEREM_INIT_SCALE_MAX, 0.211, "CeRem"),
+        (cfg.CEREM_INIT_SCALE_MIN, cfg.CEREM_INIT_SCALE_MAX, 0.167, "CeRem"),
         (cfg.CELOCI_INIT_SCALE_MIN, cfg.CELOCI_INIT_SCALE_MAX, 0.318, "CeLocI"),
     ):
         assert lo < 0.0 < hi, f"{name} range [{lo}, {hi}] no longer straddles zero"
@@ -268,17 +272,58 @@ def test_init_scale_ranges_straddle_zero():
             f"{name} negative fraction changed: {-lo / (hi - lo):.3f} vs {frac}")
 
 
-def test_celoc_and_cerem_share_upper_bound():
-    """The two E->E ranges differ ONLY in their lower bound.
+def test_ee_ranges_are_identical():
+    """The two E->E scale ranges are now the SAME range, not merely similar.
 
-    CeLoc U[-0.3, 1.5] mean 0.600; CeRem U[-0.4, 1.5] mean 0.550.  So an edge
-    moved from local to remote loses strength purely by gaining more inhibitory
-    reach, not by losing excitatory reach: E[w | w>0] = +0.750 for both.
+    They used to differ in their lower bound (CeLoc U[-0.3, 1.5] mean 0.600;
+    CeRem U[-0.4, 1.5] mean 0.550), which is what made an edge moved from local
+    to remote lose strength and gave p_rewire a drive gradient to smuggle.  They
+    are now identical, so mean(CeLoc) == mean(CeRem) exactly.
     """
+    assert cfg.CELOC_INIT_SCALE_MIN == cfg.CEREM_INIT_SCALE_MIN, (
+        "E->E lower bounds diverged -- means no longer match, so drive is no "
+        "longer flat in p_rewire")
     assert cfg.CELOC_INIT_SCALE_MAX == cfg.CEREM_INIT_SCALE_MAX, (
-        "CeLoc/CeRem upper bounds diverged; the 'same excitation, more inhibition' "
-        "reading of the asymmetry no longer holds")
-    assert cfg.CEREM_INIT_SCALE_MIN < cfg.CELOC_INIT_SCALE_MIN
+        "E->E upper bounds diverged -- same consequence")
+
+
+def test_ee_drive_is_flat_in_p_rewire():
+    """The point of the whole rework: per-unit E->E drive does not depend on p.
+
+    Branch A splits ONE ring of TARGET_OUTDEG_PyPy edges between CeLoc and CeRem
+    according to p_rewire, so per-unit drive is
+
+        W_PY2PY_SELF + K*[ W_CELOC*mean(CeLoc)*(1-p) + W_CEREM*mean(CeRem)*p ]
+
+    whose slope in p is K*(W_CEREM*mean(CeRem) - W_CELOC*mean(CeLoc)).  Equal
+    coefficients AND equal means make that slope exactly zero, which is the flat
+    drive-vs-p that Branch B had by construction (it dealt a full ring into each
+    of CeLoc and CeRem, so both in-degrees were K at every p).
+
+    A nonzero slope means p_rewire again carries an unmodelled excitation
+    difference, and any effect attributed to topology conceals it.
+    """
+    mL = (cfg.CELOC_INIT_SCALE_MIN + cfg.CELOC_INIT_SCALE_MAX) / 2
+    mR = (cfg.CEREM_INIT_SCALE_MIN + cfg.CEREM_INIT_SCALE_MAX) / 2
+    slope = cfg.TARGET_OUTDEG_PyPy * (cfg.W_CEREM * mR - cfg.W_CELOC * mL)
+    assert abs(slope) < 1e-9, (
+        f"drive slope in p_rewire is {slope:.4f}, not zero -- p_rewire is "
+        f"confounded with excitation again (w {cfg.W_CELOC}/{cfg.W_CEREM}, "
+        f"means {mL}/{mR})")
+
+    # And empirically, on the real generator with real weight draws.
+    drives = []
+    for p in (0.001, 0.3, 0.6, 0.9):
+        CeLoc, CeRem, _ = _build(p, seed=11)
+        rng = np.random.default_rng(4)
+        vL = CeLoc.data * rng.uniform(cfg.CELOC_INIT_SCALE_MIN, cfg.CELOC_INIT_SCALE_MAX, CeLoc.nnz)
+        vR = CeRem.data * rng.uniform(cfg.CEREM_INIT_SCALE_MIN, cfg.CEREM_INIT_SCALE_MAX, CeRem.nnz)
+        drives.append(cfg.W_CELOC * vL.sum() / CeLoc.shape[0]
+                      + cfg.W_CEREM * vR.sum() / CeRem.shape[0])
+    spread = (max(drives) - min(drives)) / np.mean(drives)
+    assert spread < 0.02, (
+        f"measured mean drive varies {100*spread:.1f}% across p_rewire "
+        f"(expected <2% sampling noise): {[round(d, 3) for d in drives]}")
 
 
 def test_scaled_celoc_weights_stay_within_scale_range():
