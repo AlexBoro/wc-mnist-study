@@ -256,7 +256,8 @@ def save_lfp(E_window: np.ndarray, times: np.ndarray, path: str, dt: float,
              I_window: np.ndarray | None = None, CeLoc=None, CeRem=None,
              image_duration: float | None = None, pulsed: bool = False,
              cutoff_hz: float = 1.0, w_celoc: float | None = None,
-             w_cerem: float | None = None):
+             w_cerem: float | None = None, span: float | None = None,
+             return_stats: bool = False):
     """Sparse filtered LFP proxy at 28 ring-spaced virtual electrodes (§12).
 
     Reconstructs the biophysical LFP proxy at evenly-spaced electrodes on the 1-D
@@ -328,8 +329,15 @@ def save_lfp(E_window: np.ndarray, times: np.ndarray, path: str, dt: float,
     # seizures do not clip; only the extreme tips of the largest ictal peaks
     # (ep47/ep99) truncate on the top/bottom electrodes — acceptable since those
     # deflections are already unambiguously supra-threshold.
+    #
+    # The span now lives in wc_config (LFP_SPAN) rather than here, because the
+    # E->E rework changes the signal amplitude: 150 was calibrated against the
+    # OLD coefficients, and holding it fixed while the drive changes would silently
+    # change pixels-per-signal-unit, breaking the transferability the fixed axis
+    # exists to provide. Recalibrate from the pilot's measured peak deflections and
+    # set cfg.LFP_SPAN so pixels-per-signal-unit matches the old figures.
     _ladder_mid = (E_count - 1) * 5.0 / 2.0
-    _span = 150.0
+    _span = float(cfg.LFP_SPAN if span is None else span)
     ax.set_ylim(_ladder_mid - _span / 2.0, _ladder_mid + _span / 2.0)
 
     # MNIST stimulus onset marks (needs ylim, so after plotting)
@@ -345,6 +353,26 @@ def save_lfp(E_window: np.ndarray, times: np.ndarray, path: str, dt: float,
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
+    if return_stats:
+        # Peak deflection of the FILTERED, un-offset traces -- the quantity the
+        # span must accommodate. Reported so cfg.LFP_SPAN can be recalibrated
+        # from the pilot's measured amplitudes rather than set by eye.
+        # The span must accommodate the LADDER (fixed at (E_count-1)*5.0) PLUS the
+        # signal excursion above/below it -- the ladder dominates, so a
+        # recommendation based on peak amplitude alone is badly wrong.
+        # pixels-per-signal-unit depends ONLY on _span, so holding _span fixed
+        # already preserves the old figures' scale; the live question is whether
+        # deflections clip.
+        _ladder_h = (E_count - 1) * 5.0
+        _peak = float(np.abs(filt).max())
+        return dict(path=path, span=_span, ladder_height=_ladder_h,
+                    peak_abs=_peak,
+                    p99_abs=float(np.percentile(np.abs(filt), 99)),
+                    per_electrode_peak=np.abs(filt).max(axis=0).tolist(),
+                    span_needed=_ladder_h + 2.0 * _peak,
+                    headroom=_span - _ladder_h,
+                    clipped_frac=float(np.mean(
+                        np.abs(stacked - _ladder_mid) > _span / 2.0)))
     return path
 
 

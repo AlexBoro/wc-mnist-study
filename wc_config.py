@@ -120,6 +120,18 @@ PILOT_COEFF_ARMS = {
 # itself uses the learnable per-unit inh_to_exc_gain, not a fixed scalar.
 W_LFP_INH = 25.0
 
+# Fixed y-axis span of the LFP ladder, in signal units (wc_figures.save_lfp).
+# The axis is deliberately NOT autoscaled: a constant span makes
+# pixels-per-signal-unit identical on every figure, which is what lets a fixed
+# pixel-deflection threshold transfer across runs and keeps flat epochs readable.
+#
+# 150.0 was calibrated 2026-07-25 against the OLD E->E coefficients (0.15/0.05).
+# The rework changes signal amplitude, so this value is PROVISIONAL: the pilot
+# reports measured peak deflections (save_lfp(..., return_stats=True)) and this
+# is then set so pixels-per-signal-unit matches the old figures. Leaving it at
+# 150 while the drive changes would silently rescale every figure.
+LFP_SPAN = 150.0
+
 # =============================================================================
 # Dataset split (cell 11 / §4): deterministic 50k/10k, split RNG seed 123
 # =============================================================================
@@ -212,6 +224,12 @@ class ExperimentConfig:
     # lands in the run manifest.  Defaults are the study-wide values.
     w_celoc: float = W_CELOC
     w_cerem: float = W_CEREM
+
+    # Label for a coefficient variant (a key of PILOT_COEFF_ARMS, or "" for the
+    # study defaults).  Pure metadata -- it never enters the dynamics -- but it
+    # reaches run_id, params.json and the manifest, which is what keeps three
+    # arms at one seed from resolving to the same output directory.
+    arm: str = ""
 
     # ---- Fixed hyperparameters (§4) ----
     num_epochs: int = NUM_EPOCHS

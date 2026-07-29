@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import time
+import hashlib
 import platform
 from dataclasses import dataclass
 
@@ -103,6 +105,45 @@ def _summarise(name, arr):
             f"{name}_min": float(a.min()), f"{name}_max": float(a.max())}
 
 
+def model_fingerprint(config: cfg.ExperimentConfig) -> dict:
+    """Every constant that changes what a run MEANS, plus a short hash of them.
+
+    A resumable sweep skips a run whose bundle already exists.  That is only
+    sound if the existing bundle was produced by the same model definition -- and
+    nothing in the bundle used to record the model definition, so a mid-sweep
+    change to a coefficient or a scale range would be silently mixed into the
+    same output tree with no way to tell the halves apart afterwards.
+
+    The fingerprint is written to every manifest and the hash is compared on
+    resume.  It covers the E->E drive terms (coefficients and both scale ranges),
+    the connectivity degrees and rewiring ranges, the inhibitory ranges, and the
+    integration step -- i.e. everything that would make two runs incomparable.
+    Deliberately EXCLUDES per-run sampled values (those are in params.json) and
+    anything cosmetic.
+    """
+    fp = dict(
+        w_py2py_self=float(cfg.W_PY2PY_SELF),
+        w_celoc=float(getattr(config, "w_celoc", cfg.W_CELOC)),
+        w_cerem=float(getattr(config, "w_cerem", cfg.W_CEREM)),
+        celoc_scale=[float(cfg.CELOC_INIT_SCALE_MIN), float(cfg.CELOC_INIT_SCALE_MAX)],
+        cerem_scale=[float(cfg.CEREM_INIT_SCALE_MIN), float(cfg.CEREM_INIT_SCALE_MAX)],
+        celoci_scale=[float(cfg.CELOCI_INIT_SCALE_MIN), float(cfg.CELOCI_INIT_SCALE_MAX)],
+        inh2py_gain=[float(cfg.INH2PY_GAIN_MIN), float(cfg.INH2PY_GAIN_MAX)],
+        bias_e_init=[float(cfg.BIAS_E_INIT_MIN), float(cfg.BIAS_E_INIT_MAX)],
+        bias_i_init=[float(cfg.BIAS_I_INIT_MIN), float(cfg.BIAS_I_INIT_MAX)],
+        mnist_weight=[float(cfg.MNIST_WEIGHT_MIN), float(cfg.MNIST_WEIGHT_MAX)],
+        outdeg_pypy=int(cfg.TARGET_OUTDEG_PyPy),
+        outdeg_pyinh=int(cfg.TARGET_OUTDEG_PyInh),
+        p_rewire_pypy=[float(cfg.P_REWIRE_PyPy_MIN), float(cfg.P_REWIRE_PyPy_MAX)],
+        p_rewire_pyinh=[float(cfg.P_REWIRE_PyInh_MIN), float(cfg.P_REWIRE_PyInh_MAX)],
+        dt=float(cfg.DT),
+        mnist_input_scale=float(cfg.MNIST_INPUT_SCALE),
+    )
+    blob = json.dumps(fp, sort_keys=True, separators=(",", ":"))
+    fp["hash"] = hashlib.sha256(blob.encode()).hexdigest()[:12]
+    return fp
+
+
 def _collect_params(model, seed, config, alpha_H, tau_H):
     """Every sampled hyperparameter + per-unit array summary stats (§5)."""
     p = dict(
@@ -116,6 +157,11 @@ def _collect_params(model, seed, config, alpha_H, tau_H):
         image_duration=float(cfg.IMAGE_DURATION),
         mnist_input_scale=float(cfg.MNIST_INPUT_SCALE),
         split_seed=int(config.split_seed),
+        # E->E drive coefficients: per-run, because a pilot arm varies them.
+        w_celoc=float(getattr(config, "w_celoc", cfg.W_CELOC)),
+        w_cerem=float(getattr(config, "w_cerem", cfg.W_CEREM)),
+        arm=str(getattr(config, "arm", "")),
+        fingerprint=model_fingerprint(config)["hash"],
     )
     # per-unit / per-edge summaries
     p.update(_summarise("tauPy_eff", model.tauPy_eff.detach().cpu().numpy()))
@@ -206,7 +252,8 @@ def run_one_exploration(seed: int, config: cfg.ExperimentConfig, device=None,
 
     params = _collect_params(model, seed, config, alpha_H, tau_H)
     params["runtime_s"] = runtime_s
-    run_id = f"seed{seed:03d}__{config.name}"
+    arm = str(getattr(config, "arm", "") or "")
+    run_id = f"seed{seed:03d}__{config.name}" + (f"__{arm}" if arm else "")
     if verbose:
         print(f"[{run_id}] alpha_H={alpha_H:.3f} tau_H={tau_H:.3f} "
               f"E[max]={E_traj.max():.3f} t={runtime_s:.1f}s", flush=True)

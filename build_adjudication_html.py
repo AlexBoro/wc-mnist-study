@@ -73,8 +73,17 @@ def _b64_img(path):
     return "data:image/png;base64," + base64.b64encode(b).decode("ascii")
 
 
-def _run_dir(out_root, config_name, seed):
-    return Path(out_root) / config_name / f"run_{int(seed):03d}"
+def _run_dir(out_root, config_name, seed, arm=""):
+    """Mirror of param_persist.run_dir: arm is a level ABOVE config_name.
+
+    Kept as a local copy (no import of param_persist) so the HTML builder runs
+    without torch, but it MUST stay in step with param_persist.run_dir or cards
+    will point at directories that do not exist.
+    """
+    root = Path(out_root)
+    if arm:
+        root = root / str(arm)
+    return root / config_name / f"run_{int(seed):03d}"
 
 
 def _find_fig(run_dir, name):
@@ -126,7 +135,7 @@ def _card_html(row, out_root):
     clause = row.get("clause", "")
     is_review = row.get("_is_review", False)
 
-    rd = _run_dir(out_root, cname, seed)
+    rd = _run_dir(out_root, cname, seed, arm=str(row.get("arm", "") or ""))
     hm = _b64_img(_find_fig(rd, "heatmap_E.png"))
     lfp = _b64_img(_find_fig(rd, "lfp.png"))
 

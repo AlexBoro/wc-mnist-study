@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+import dataclasses
 import json
 import time
 import glob
@@ -66,11 +67,40 @@ def _env_provenance() -> dict:
 # ---------------------------------------------------------------------------
 # paths / completeness
 # ---------------------------------------------------------------------------
-def run_dir(out_root, config_name, seed) -> Path:
-    return Path(out_root) / config_name / f"run_{seed:03d}"
+def run_dir(out_root, config_name, seed, arm="") -> Path:
+    """Bundle directory for one run.
+
+    ``arm`` names a coefficient variant (see cfg.PILOT_COEFF_ARMS).  It becomes a
+    directory level ABOVE config_name, so an armed sweep writes
+
+        out_root/arm/config_name/run_SSS/
+
+    and an unarmed one keeps the original out_root/config_name/run_SSS/ layout
+    byte-for-byte.  Without this, three arms at one seed+config would resolve to
+    the same directory: the first would be written, the other two skipped as
+    "already complete", and the sweep would silently return one arm's data
+    labelled as three.
+    """
+    root = Path(out_root)
+    if arm:
+        root = root / str(arm)
+    return root / config_name / f"run_{seed:03d}"
 
 
-def is_complete(out_root, config_name, seed, expected_T=None) -> bool:
+def bundle_fingerprint(out_root, config_name, seed, arm="") -> str:
+    """The model fingerprint recorded in an existing bundle ("" if absent)."""
+    man = run_dir(out_root, config_name, seed, arm) / "manifest.json"
+    try:
+        with open(man) as f:
+            m = json.load(f)
+    except Exception:
+        return ""
+    fp = m.get("model_fingerprint") or {}
+    return str(fp.get("hash", "")) if isinstance(fp, dict) else str(fp)
+
+
+def is_complete(out_root, config_name, seed, expected_T=None, arm="",
+                expect_fingerprint=None) -> bool:
     """Fast completion check for the resumable driver.
 
     ``save_bundle`` writes arrays.npz -> params.json -> manifest.json (manifest
@@ -81,11 +111,22 @@ def is_complete(out_root, config_name, seed, expected_T=None) -> bool:
     that 1500x (resume skip-scan or a completeness sweep) is what makes the naive
     version crawl. Pass ``expected_T`` only when you want a deep integrity check
     (opens the npz and verifies the E_traj row count).
+
+    ``expect_fingerprint`` (a 12-char hash from PE.model_fingerprint) makes the
+    check refuse to treat a bundle built by a DIFFERENT model definition as
+    complete: a mismatch returns False, so the run is redone under the current
+    definition rather than silently inherited from the old one. Reading the
+    fingerprint opens manifest.json, which is small (unlike arrays.npz), so this
+    stays cheap over the Drive mount.
     """
-    d = run_dir(out_root, config_name, seed)
+    d = run_dir(out_root, config_name, seed, arm)
     arr, par, man = d / "arrays.npz", d / "params.json", d / "manifest.json"
     if not (arr.exists() and par.exists() and man.exists()):
         return False
+    if expect_fingerprint:
+        got = bundle_fingerprint(out_root, config_name, seed, arm)
+        if got != str(expect_fingerprint):
+            return False
     if expected_T is None:
         return True
     try:
@@ -103,8 +144,8 @@ def is_complete(out_root, config_name, seed, expected_T=None) -> bool:
 # save
 # ---------------------------------------------------------------------------
 def save_bundle(out_root, result: PE.ExplorationResult, code_tag="",
-                repo_dir=None, compress=True) -> Path:
-    d = run_dir(out_root, result.config_name, result.seed)
+                repo_dir=None, compress=True, arm="", model_fingerprint=None) -> Path:
+    d = run_dir(out_root, result.config_name, result.seed, arm)
     d.mkdir(parents=True, exist_ok=True)
 
     # arrays
@@ -123,6 +164,13 @@ def save_bundle(out_root, result: PE.ExplorationResult, code_tag="",
         run_id=result.run_id, seed=result.seed, config_name=result.config_name,
         input_mode=result.input_mode, alpha_H=result.alpha_H, tau_H=result.tau_H,
         git_commit=_git_commit(repo_dir), code_tag=code_tag,
+        arm=str(arm or result.params.get("arm", "")),
+        # Full model definition + its hash. Compared on resume so a mid-sweep
+        # code change cannot silently mix two definitions in one output tree.
+        model_fingerprint=(model_fingerprint if model_fingerprint is not None
+                           else PE.model_fingerprint(cfg.make_config(result.config_name))),
+        w_celoc=float(result.params.get("w_celoc", cfg.W_CELOC)),
+        w_cerem=float(result.params.get("w_cerem", cfg.W_CEREM)),
         seeds=dict(master_seed=result.seed,
                    split_seed=int(cfg.SPLIT_SEED),
                    note="init_rng & config_rng spawned from SeedSequence(master_seed).spawn(2); "
@@ -143,8 +191,8 @@ def save_bundle(out_root, result: PE.ExplorationResult, code_tag="",
     return d
 
 
-def load_bundle(out_root, config_name, seed):
-    d = run_dir(out_root, config_name, seed)
+def load_bundle(out_root, config_name, seed, arm=""):
+    d = run_dir(out_root, config_name, seed, arm)
     with np.load(d / "arrays.npz") as z:
         arrays = {k: z[k] for k in z.files}
     params = json.load(open(d / "params.json"))
@@ -158,15 +206,43 @@ def load_bundle(out_root, config_name, seed):
 _LOG_COLS = None
 
 
-def append_log_row(out_root, result: PE.ExplorationResult):
+def append_log_row(out_root, result: PE.ExplorationResult, arm=""):
+    """Append one row to the sweep-root master log.
+
+    The log stays at ``out_root`` (NOT under the arm directory) so one CSV spans
+    every arm; ``arm`` and the E->E coefficients are columns, which is what makes
+    the arms comparable in a single read.
+    """
     import csv
     path = Path(out_root) / MASTER_LOG
     row = dict(result.params)  # includes seed, config_name, alpha_H, tau_H, runtime_s, summaries
     row["run_id"] = result.run_id
-    write_header = not path.exists()
-    # Stable column order: union of keys seen so far (persist header on first write)
+    row["arm"] = str(arm or result.params.get("arm", ""))
+    row["runtime_s"] = float(result.runtime_s)
+    # Column order must come from the FILE's existing header, not from this row's
+    # keys.  Using sorted(row.keys()) per call silently misaligns every column
+    # from the point where any row's key set differs from the header's -- and a
+    # 1500-run sweep resumed after a code change is exactly where that happens.
+    if path.exists() and path.stat().st_size > 0:
+        with open(path, "r", newline="") as f:
+            header = next(csv.reader(f), []) or sorted(row.keys())
+        extra = sorted(set(row) - set(header))
+        if extra:
+            # Never reorder a partially-written log: park unknown keys in a JSON
+            # side column if it exists, else drop them and say so once.
+            if "extra_json" in header:
+                row["extra_json"] = json.dumps({k: row[k] for k in extra}, sort_keys=True)
+            else:
+                print(f"[warn] master log lacks columns {extra}; not recorded in CSV "
+                      f"(they are in params.json)", flush=True)
+        row = {k: row.get(k, "") for k in header}
+        write_header = False
+    else:
+        header = sorted(set(row) | {"extra_json"})
+        row = {k: row.get(k, "") for k in header}
+        write_header = True
     with open(path, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=sorted(row.keys()))
+        w = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
         if write_header:
             w.writeheader()
         w.writerow(row)
@@ -178,45 +254,138 @@ def append_log_row(out_root, result: PE.ExplorationResult):
 # ---------------------------------------------------------------------------
 def run_sweep(out_root, seeds, config_names=None, device=None,
               run_seconds=PE.RUN_SECONDS, record_stride=1, dtype_out=np.float16,
-              code_tag="", repo_dir=None, render_fn=None, verbose=True):
-    """Resumable 500×3 sweep.
+              code_tag="", repo_dir=None, render_fn=None, verbose=True,
+              arms=None, deep_check=True):
+    """Resumable sweep over arms x configs x seeds.
 
-    Iterates ``config_names`` × ``seeds``; skips complete bundles; saves a bundle
-    (+ optional figures via ``render_fn(out_root, result)``) and appends a log row
-    per finished run.  A disconnect costs at most the in-flight run.
+    ``arms`` is a mapping ``{arm_name: coefficient}`` (e.g. cfg.PILOT_COEFF_ARMS)
+    setting both E->E coefficients for that arm; pass None for a single unarmed
+    sweep using the config defaults, which reproduces the original layout and
+    behaviour exactly.
+
+    Resume is by bundle presence AND model fingerprint: a bundle written under a
+    different model definition does NOT count as complete, so a mid-sweep code
+    change causes those runs to be redone rather than silently inherited.  A
+    disconnect costs at most the in-flight run.
+
+    ``deep_check=True`` verifies E_traj row count on skip candidates.  That opens
+    arrays.npz, which over the Drive FUSE mount is a network round-trip per run;
+    set False for a fast skip-scan once you trust the tree.
     """
     if config_names is None:
         config_names = [c.name for c in cfg.make_configs()]
     configs = {c.name: c for c in cfg.make_configs()}
     expected_T = len(range(0, int(round(run_seconds / cfg.DT)), record_stride))
+    arm_items = list(arms.items()) if arms else [("", None)]
 
-    total = len(config_names) * len(seeds)
-    done = skipped = 0
+    total = len(arm_items) * len(config_names) * len(seeds)
+    done = skipped = failed = redone = 0
     t_start = time.time()
-    for cname in config_names:
-        config = configs[cname]
-        for seed in seeds:
-            if is_complete(out_root, cname, seed, expected_T=expected_T):
-                skipped += 1
-                continue
-            result = PE.run_one_exploration(
-                seed, config, device=device, run_seconds=run_seconds,
-                record_stride=record_stride, dtype_out=dtype_out, verbose=False)
-            save_bundle(out_root, result, code_tag=code_tag, repo_dir=repo_dir)
-            if render_fn is not None:
+    Path(out_root).mkdir(parents=True, exist_ok=True)
+
+    for arm_name, coeff in arm_items:
+        for cname in config_names:
+            config = configs[cname]
+            if coeff is not None:
+                config = dataclasses.replace(
+                    config, w_celoc=float(coeff), w_cerem=float(coeff))
+            # arm is metadata on the config so run_id/params.json carry it
+            config = dataclasses.replace(config, arm=str(arm_name))
+            fp = PE.model_fingerprint(config)
+            for seed in seeds:
+                if is_complete(out_root, cname, seed,
+                               expected_T=(expected_T if deep_check else None),
+                               arm=arm_name, expect_fingerprint=fp["hash"]):
+                    skipped += 1
+                    continue
+                stale = bundle_fingerprint(out_root, cname, seed, arm_name)
+                if stale and stale != fp["hash"]:
+                    redone += 1
+                    if verbose:
+                        print(f"[refresh] {arm_name}/{cname}/run_{seed:03d}: "
+                              f"fingerprint {stale} != {fp['hash']}, recomputing",
+                              flush=True)
                 try:
-                    render_fn(out_root, result)
+                    result = PE.run_one_exploration(
+                        seed, config, device=device, run_seconds=run_seconds,
+                        record_stride=record_stride, dtype_out=dtype_out,
+                        verbose=False)
+                    save_bundle(out_root, result, code_tag=code_tag,
+                                repo_dir=repo_dir, arm=arm_name,
+                                model_fingerprint=fp)
+                    append_log_row(out_root, result, arm=arm_name)
                 except Exception as e:
-                    print(f"[warn] render failed for {result.run_id}: {e}", flush=True)
-            append_log_row(out_root, result)
-            done += 1
-            if verbose and (done % 10 == 0 or done == 1):
-                el = time.time() - t_start
-                rate = el / max(done, 1)
-                remaining = (total - skipped - done) * rate
-                print(f"[{done}/{total-skipped} new | {skipped} skipped] "
-                      f"{result.run_id} rt={result.runtime_s:.1f}s "
-                      f"elapsed={el/60:.1f}m eta={remaining/60:.1f}m", flush=True)
-    print(f"DONE: {done} new, {skipped} skipped, total complete="
+                    # One bad run must not abandon the other 1499.
+                    failed += 1
+                    print(f"[FAIL] arm={arm_name or '-'} {cname} seed={seed}: "
+                          f"{type(e).__name__}: {e}", flush=True)
+                    _append_failure(out_root, arm_name, cname, seed, e)
+                    continue
+                if render_fn is not None:
+                    try:
+                        render_fn(out_root, result, arm=arm_name)
+                    except TypeError:
+                        render_fn(out_root, result)
+                    except Exception as e:
+                        print(f"[warn] render failed for {result.run_id}: {e}",
+                              flush=True)
+                done += 1
+                if verbose and (done % 10 == 0 or done == 1):
+                    el = time.time() - t_start
+                    rate = el / max(done, 1)
+                    remaining = (total - skipped - done) * rate
+                    print(f"[{done}/{total-skipped} new | {skipped} skipped] "
+                          f"{result.run_id} rt={result.runtime_s:.1f}s "
+                          f"elapsed={el/60:.1f}m eta={remaining/60:.1f}m", flush=True)
+
+    print(f"DONE: {done} new, {skipped} skipped, {failed} failed, "
+          f"{redone} refreshed (fingerprint change), total complete="
           f"{done+skipped}/{total} in {(time.time()-t_start)/60:.1f}m", flush=True)
-    return dict(done=done, skipped=skipped, total=total)
+    return dict(done=done, skipped=skipped, failed=failed, redone=redone,
+                total=total)
+
+
+def _append_failure(out_root, arm, config_name, seed, exc):
+    """Record a failed run so the sweep summary is not silently short."""
+    import traceback
+    path = Path(out_root) / "failures.jsonl"
+    rec = dict(arm=str(arm), config_name=config_name, seed=int(seed),
+               error=f"{type(exc).__name__}: {exc}",
+               traceback=traceback.format_exc()[-2000:],
+               timestamp=time.strftime("%Y-%m-%dT%H:%M:%S"))
+    with open(path, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+        f.flush()
+
+
+def sweep_status(out_root, seeds, config_names=None, arms=None,
+                 expect_fingerprint=None):
+    """What is present on disk, without running anything.
+
+    Returns per-(arm, config) counts of complete / missing / stale-fingerprint,
+    which is what you want after a Colab disconnect before deciding to resume.
+    """
+    if config_names is None:
+        config_names = [c.name for c in cfg.make_configs()]
+    configs = {c.name: c for c in cfg.make_configs()}
+    arm_items = list(arms.items()) if arms else [("", None)]
+    rows = []
+    for arm_name, coeff in arm_items:
+        for cname in config_names:
+            config = configs[cname]
+            if coeff is not None:
+                config = dataclasses.replace(config, w_celoc=float(coeff),
+                                             w_cerem=float(coeff))
+            want = expect_fingerprint or PE.model_fingerprint(config)["hash"]
+            comp = miss = stale = 0
+            for seed in seeds:
+                if is_complete(out_root, cname, seed, arm=arm_name,
+                               expect_fingerprint=want):
+                    comp += 1
+                elif bundle_fingerprint(out_root, cname, seed, arm_name):
+                    stale += 1
+                else:
+                    miss += 1
+            rows.append(dict(arm=arm_name, config_name=cname, complete=comp,
+                             missing=miss, stale=stale, total=len(seeds)))
+    return rows
