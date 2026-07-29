@@ -28,6 +28,8 @@ from __future__ import annotations
 import os
 import numpy as np
 
+import wc_config as cfg
+
 FIG_TYPES = ("heatmap_E", "heatmap_I", "lfp", "lfp_focus")
 
 
@@ -217,15 +219,23 @@ def save_heatmap(activity: np.ndarray, times: np.ndarray, path: str, title: str,
 def save_lfp(E_window: np.ndarray, times: np.ndarray, path: str, dt: float,
              I_window: np.ndarray | None = None, CeLoc=None, CeRem=None,
              image_duration: float | None = None, pulsed: bool = False,
-             cutoff_hz: float = 1.0):
+             cutoff_hz: float = 1.0, w_celoc: float | None = None,
+             w_cerem: float | None = None):
     """Sparse filtered LFP proxy at 28 ring-spaced virtual electrodes (§12).
 
     Reconstructs the biophysical LFP proxy at evenly-spaced electrodes on the 1-D
     recurrent ring (the WC connectivity metric — see ``_ring_electrodes``):
 
-        LFP = 10*E_self + 0.15*loc_syn + 0.05*rem_syn + 25*I_self
+        LFP = W_PY2PY_SELF*self_term + W_CELOC*loc_term
+              + W_CEREM*rem_term + W_LFP_INH*inh_term
 
-    where ``loc_syn``/``rem_syn`` are the local/remote excitatory synaptic drive
+    The three excitatory coefficients are EXACTLY the model's Py2Py coefficients
+    (wc_config), because this proxy is the model's own excitatory update line
+    restricted to the electrode rows.  ``w_celoc``/``w_cerem`` override them for
+    a run whose model was built with non-default coefficients — pass
+    ``model.w_celoc``/``model.w_cerem`` so the proxy tracks the model.
+
+    where ``loc_term``/``rem_term`` are the local/remote excitatory synaptic drive
     into each electrode (``CeLoc``/``CeRem`` are SciPy CSR [N,N] connectivity).
     The stacked traces are zero-phase high-pass filtered (order 4), labeled by
     ring position, and annotated with MNIST stimulus onsets.  If ``I_window`` or
@@ -261,7 +271,10 @@ def save_lfp(E_window: np.ndarray, times: np.ndarray, path: str, dt: float,
     else:
         rem_term = np.zeros_like(self_term)
 
-    LFP = 10.0 * self_term + 0.15 * loc_term + 0.05 * rem_term + 25.0 * inh_term
+    wL = cfg.W_CELOC if w_celoc is None else float(w_celoc)
+    wR = cfg.W_CEREM if w_cerem is None else float(w_cerem)
+    LFP = (cfg.W_PY2PY_SELF * self_term + wL * loc_term
+           + wR * rem_term + cfg.W_LFP_INH * inh_term)
 
     dt_eff = float(times[1] - times[0]) if len(times) > 1 else float(dt)
     sample_rate = 1.0 / dt_eff if dt_eff > 0 else 1.0

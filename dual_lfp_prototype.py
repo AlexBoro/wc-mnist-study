@@ -60,7 +60,8 @@ def lfp_from_window(E_window, I_window, t_window, CeLoc, CeRem, dt):
                 if CeLoc is not None else np.zeros_like(self_term))
     rem_term = (np.asarray(CeRem[electrodes, :] @ E_window.T).T
                 if CeRem is not None else np.zeros_like(self_term))
-    LFP = 10.0*self_term + 0.15*loc_term + 0.05*rem_term + 25.0*inh_term
+    LFP = (cfg.W_PY2PY_SELF*self_term + cfg.W_CELOC*loc_term
+           + cfg.W_CEREM*rem_term + cfg.W_LFP_INH*inh_term)
     dt_eff = float(t_window[1]-t_window[0]) if len(t_window) > 1 else float(dt)
     sr = 1.0/dt_eff if dt_eff > 0 else 1.0
     filt = figs.filter_eeg(LFP, CUTOFF_HZ, sr, high_or_low="high", order=4)

@@ -260,7 +260,8 @@ def check_numeric_equivalence() -> list[str]:
         CeLocI_m = model._get_sparse_matrix(model.CeLocI_crow_indices, model.CeLocI_col_indices,
                                             model.CeLocI_values, model.CeLocI_shape)
 
-        Py2Py = 10.0 * E + 0.15 * (CeLoc_m @ E) + 0.05 * (CeRem_m @ E)
+        Py2Py = (cfg.W_PY2PY_SELF * E + cfg.W_CELOC * (CeLoc_m @ E)
+                 + cfg.W_CEREM * (CeRem_m @ E))
         Inh2Py = model.inh_to_exc_gain * I
         Py2Inh = 0.1 * (CeLocI_m @ E) + 15.0 * E
         input_e = Py2Py - Inh2Py + I_ext + model.bias_e - model.alpha_H * H

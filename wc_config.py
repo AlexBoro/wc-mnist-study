@@ -71,6 +71,38 @@ CEREM_INIT_SCALE_MIN,  CEREM_INIT_SCALE_MAX  = -0.4, 1.5
 CELOCI_INIT_SCALE_MIN, CELOCI_INIT_SCALE_MAX = -0.7, 1.5
 
 # =============================================================================
+# Recurrent E->E drive coefficients
+# =============================================================================
+# The Py2Py update line, in one place:
+#
+#     Py2Py = W_PY2PY_SELF * E + W_CELOC * (CeLoc @ E) + W_CEREM * (CeRem @ E)
+#
+# These were bare literals at six sites (three model paths, the LFP proxy in
+# wc_figures, model_diff_check, dual_lfp_prototype).  The LFP proxy's excitatory
+# part is EXACTLY this expression restricted to the electrode rows, so the proxy
+# and the model must use the same numbers or the proxy silently stops measuring
+# the model it claims to measure.  Naming them makes that coupling mechanical.
+#
+# W_CELOC vs W_CEREM and the p_rewire confound: Branch A splits ONE ring of
+# TARGET_OUTDEG_PyPy edges between CeLoc and CeRem according to p_rewire, so
+# per-unit drive is
+#
+#     W_PY2PY_SELF + K * [ W_CELOC * mean(CeLoc) * (1-p) + W_CEREM * mean(CeRem) * p ]
+#
+# whose slope in p is K * (W_CEREM*mean(CeRem) - W_CELOC*mean(CeLoc)).  With
+# unequal coefficients that slope is nonzero and p_rewire silently carries an
+# excitation difference (corr = -1.0 exactly).  Equal coefficients AND equal
+# weight means make the slope exactly zero at every K, which is the flat
+# drive-vs-p that Branch B always had by construction.
+W_PY2PY_SELF = 10.0
+W_CELOC = 0.15
+W_CEREM = 0.05
+
+# Inhibitory coefficient of the LFP proxy only (wc_figures.save_lfp); the model
+# itself uses the learnable per-unit inh_to_exc_gain, not a fixed scalar.
+W_LFP_INH = 25.0
+
+# =============================================================================
 # Dataset split (cell 11 / §4): deterministic 50k/10k, split RNG seed 123
 # =============================================================================
 SPLIT_SEED = 123
@@ -155,6 +187,13 @@ class ExperimentConfig:
     name: str                              # "simultaneous" | "sequential_noH" | "sequential_H"
     input_mode: str                        # "simultaneous" | "sequential"
     alpha_h_mode: str                      # "off" | "uniform_1_10"
+
+    # ---- Recurrent E->E drive coefficients ----
+    # Carried on the config (not read from the module at use time) so a pilot
+    # arm that varies them is fully described by (seed, ExperimentConfig) and
+    # lands in the run manifest.  Defaults are the study-wide values.
+    w_celoc: float = W_CELOC
+    w_cerem: float = W_CEREM
 
     # ---- Fixed hyperparameters (§4) ----
     num_epochs: int = NUM_EPOCHS

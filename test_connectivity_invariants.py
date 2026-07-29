@@ -56,6 +56,15 @@ def _build(p_pypy, p_pyinh=None, seed=0):
     return M.build_connectivity_csr(rng, p_pypy, p_pyinh)
 
 
+def _tiny_model(seed=0, **kw):
+    """A CPU model on the real connectivity, for coefficient-plumbing checks."""
+    import torch
+    rng = np.random.default_rng(seed)
+    dev = torch.device("cpu")
+    CeLoc, CeRem, CeLocI = M.build_connectivity(rng, 0.3, 0.3, dev)
+    return M.SparseBigWilsonCowan(CeLoc, CeRem, CeLocI, rng=rng, device=dev, **kw)
+
+
 # ---------------------------------------------------------------------------
 # 1. The ring lattice we start from
 # ---------------------------------------------------------------------------
@@ -291,28 +300,59 @@ def test_scaled_celoc_weights_stay_within_scale_range():
         assert w_loc.max() > hi - 0.01, f"p={p}: CeLoc max {w_loc.max()} did not saturate"
 
 
-def test_ee_coefficients_unchanged():
-    """The WC update weights CeLoc 3x more heavily than CeRem.
+def test_ee_coefficients_reach_the_model():
+    """Every forward path reads the E->E coefficients from the model instance.
 
-        Py2Py = 10.0 * E + 0.15 * (CeLoc @ E) + 0.05 * (CeRem @ E)
+        Py2Py = w_py2py_self * E + w_celoc * (CeLoc @ E) + w_cerem * (CeRem @ E)
 
-    These three coefficients dominate every structural asymmetry measured above:
-    the 3x split swamps both the 8.3% draw difference and duplicate inflation.
-    The self-term is invariant to p_rewire and larger than either connectivity
-    coefficient, so it must be included in any 'total recurrent drive' figure.
-
-    Asserted by reading the source, because they are literals in the update and
-    not exposed as config values.
+    The previous version of this test scraped the source for the literals
+    ``10.0``/``0.15``/``0.05``.  They are now named config values that a pilot
+    arm may legitimately override, so scraping is both wrong and useless.  What
+    still needs guarding is that the coefficients are not hard-coded ANYWHERE in
+    the update paths — a stray literal would silently ignore a per-run override.
     """
     import inspect
-    src = inspect.getsource(M.SparseBigWilsonCowan)
-    hits = [ln.strip() for ln in src.splitlines() if "Py2Py = " in ln]
-    assert hits, "could not find the Py2Py update line"
-    line = hits[0]
-    for coeff in ("10.0", "0.15", "0.05"):
-        assert coeff in line, (
-            f"E->E coefficient {coeff} missing from update line -- recurrent drive "
-            f"changed.  Line is: {line}")
+    for src in (inspect.getsource(M.SparseBigWilsonCowan),
+                inspect.getsource(M.forward_batched)):
+        for ln in src.splitlines():
+            if "Py2Py" not in ln and "w_celoc" not in ln and "w_cerem" not in ln:
+                continue
+            for lit in ("0.15", "0.05"):
+                assert lit not in ln, (
+                    f"bare E->E coefficient {lit} in an update path -- a per-run "
+                    f"coefficient override would be silently ignored.  Line: {ln.strip()}")
+
+    m = _tiny_model(w_celoc=0.123, w_cerem=0.456)
+    assert m.w_celoc == 0.123 and m.w_cerem == 0.456, "override did not reach the model"
+    d = _tiny_model()
+    assert (d.w_celoc, d.w_cerem) == (cfg.W_CELOC, cfg.W_CEREM), "defaults drifted from config"
+
+
+def test_lfp_proxy_matches_the_model_update():
+    """The LFP proxy IS the model's excitatory update line at the electrode rows.
+
+    wc_figures.save_lfp reconstructs
+
+        LFP = W_PY2PY_SELF*self + W_CELOC*loc + W_CEREM*rem + W_LFP_INH*inh
+
+    If the model's coefficients change and the proxy's do not, every LFP figure
+    silently stops measuring the network it is labelled with -- the failure mode
+    that motivated naming these constants.  This asserts the proxy carries no
+    bare literals and defaults to the same config values the model does.
+    """
+    import inspect
+    import wc_figures as FG
+    src = inspect.getsource(FG.save_lfp)
+    body = src.split('"""')[-1]          # skip the docstring
+    for ln in body.splitlines():
+        if "LFP =" in ln or "wL =" in ln or "wR =" in ln:
+            for lit in ("0.15", "0.05", "10.0", "25.0"):
+                assert lit not in ln, (
+                    f"bare coefficient {lit} in the LFP proxy -- proxy can "
+                    f"desynchronize from the model.  Line: {ln.strip()}")
+    sig = inspect.signature(FG.save_lfp).parameters
+    for name in ("w_celoc", "w_cerem"):
+        assert name in sig, f"save_lfp cannot track a per-run coefficient: no {name} parameter"
 
 
 # ---------------------------------------------------------------------------

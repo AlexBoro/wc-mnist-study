@@ -161,6 +161,14 @@ def build_model(seed: int, config: cfg.ExperimentConfig, device, init_rng, alpha
         bias_out=bias_out, output_weight_scale=output_weight_scale,
         tau_H=tau_H, alpha_H=alpha_H, device=device,
         mnist_input_dim=784, num_output=10,
+        # Carried on the config so a pilot arm varying the E->E coefficients is
+        # fully described by (seed, config) and lands in the run manifest.
+        # NOTE these are consumed AFTER every init_rng draw above, so varying
+        # them does NOT perturb the draw order -- two arms at the same seed get
+        # bit-identical connectivity, biases and weights, differing only in the
+        # coefficients.  That is what makes the arms directly comparable.
+        w_celoc=getattr(config, "w_celoc", None),
+        w_cerem=getattr(config, "w_cerem", None),
     )
     model.to(device)
     return model

@@ -209,8 +209,20 @@ class SparseBigWilsonCowan(nn.Module):
         bias_e_init=None,
         bias_i_init=None,
         init_ranges=None,
+        w_celoc=None,
+        w_cerem=None,
     ):
         super().__init__()
+
+        # Recurrent E->E drive coefficients (see wc_config).  Stored on the
+        # model so every forward path — step(), forward(), forward_batched() —
+        # and the LFP proxy read the SAME numbers, and so a pilot arm that
+        # varies them is captured by the model instance rather than by module
+        # state.  Plain floats, not buffers: they are fixed hyperparameters,
+        # not learnable and not part of the state dict.
+        self.w_py2py_self = float(cfg.W_PY2PY_SELF)
+        self.w_celoc = float(cfg.W_CELOC if w_celoc is None else w_celoc)
+        self.w_cerem = float(cfg.W_CEREM if w_cerem is None else w_cerem)
 
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -444,7 +456,9 @@ class SparseBigWilsonCowan(nn.Module):
         )
 
         # Connectivity-based inputs for E-I network
-        Py2Py = 10.0 * E + 0.15 * (CeLoc @ E) + 0.05 * (CeRem @ E)
+        Py2Py = (self.w_py2py_self * E
+                 + self.w_celoc * (CeLoc @ E)
+                 + self.w_cerem * (CeRem @ E))
 
         # I -> E (local, per-neuron, learnable gain)
         Inh2Py = self.inh_to_exc_gain * I
@@ -507,7 +521,9 @@ class SparseBigWilsonCowan(nn.Module):
         )
 
         # Connectivity-based inputs for E-I network
-        Py2Py = 10.0 * E + 0.15 * (CeLoc @ E) + 0.05 * (CeRem @ E)
+        Py2Py = (self.w_py2py_self * E
+                 + self.w_celoc * (CeLoc @ E)
+                 + self.w_cerem * (CeRem @ E))
 
         # I -> E (local, per-neuron, learnable gain)
         Inh2Py = self.inh_to_exc_gain * I
@@ -927,7 +943,9 @@ def forward_batched(model, E, I, O, H, I_ext, dt):
                                       model.CeLocI_values, model.CeLocI_shape)
 
     ET = E.T.contiguous()                                   # [N, B]
-    Py2Py = 10.0 * E + 0.15 * (CeLoc @ ET).T + 0.05 * (CeRem @ ET).T
+    Py2Py = (model.w_py2py_self * E
+             + model.w_celoc * (CeLoc @ ET).T
+             + model.w_cerem * (CeRem @ ET).T)
     Inh2Py = model.inh_to_exc_gain * I                      # [N] * [B,N]
     Py2Inh = 0.1 * (CeLocI @ ET).T + 15.0 * E
 
