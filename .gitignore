@@ -12,6 +12,11 @@ wc_data/
 wc_smoke_*/
 wc_resume_*/
 
+# Regenerated LFP/render figure trees — reproducible from regen_*.py, too large to track
+all100_fixed_figs/
+anchors_fixed_figs/
+dual_lfp_compare.png
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

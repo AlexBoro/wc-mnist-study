@@ -1,0 +1,8 @@
+requested fixed span=150 ylim = [-7.5, 142.5]  (ladder top offset=135, mid=67.5)
+headroom-safe (never clips) ylim = [-30, 180]  span=210
+ep71 spread-PFA seizure: filt_peak_abs=21.878 filt_span=29.751 | stacked[-5.5,148.0] span150_clip%=0.032 top_peak_over_142.5=5.5
+ep00 untrained flat baseline: filt_peak_abs=0.121 filt_span=0.154 | stacked[-0.0,135.0] span150_clip%=0.000 top_peak_over_142.5=0.0
+ep47 sustained spike-wave: filt_peak_abs=32.222 filt_span=49.502 | stacked[-12.2,161.6] span150_clip%=5.255 top_peak_over_142.5=19.1
+ep51 sustained ictal: filt_peak_abs=11.824 filt_span=16.237 | stacked[-1.9,146.5] span150_clip%=0.016 top_peak_over_142.5=4.0
+ep63 sustained ictal: filt_peak_abs=11.324 filt_span=15.717 | stacked[-1.7,144.4] span150_clip%=0.014 top_peak_over_142.5=1.9
+ep99 late-train: filt_peak_abs=29.849 filt_span=44.396 | stacked[-8.3,157.6] span150_clip%=0.301 top_peak_over_142.5=15.1

@@ -1,0 +1,68 @@
+[
+  {
+    "run": "seed001__sequential_noH",
+    "epoch": 47,
+    "S": 21.6,
+    "cross_cols": 1214,
+    "n_active_channels": 28,
+    "fast_activity_duration_s": 10.0,
+    "ink_frac": 0.3567,
+    "max_col_frac": 0.7696,
+    "n_complexes": 34
+  },
+  {
+    "run": "seed000__sequential_noH",
+    "epoch": 71,
+    "S": 19.8,
+    "cross_cols": 364,
+    "n_active_channels": 25,
+    "fast_activity_duration_s": 10.0,
+    "ink_frac": 0.8569,
+    "max_col_frac": 0.8936,
+    "n_complexes": 1
+  },
+  {
+    "run": "seed002__sequential_noH",
+    "epoch": 51,
+    "S": 19.1,
+    "cross_cols": 1,
+    "n_active_channels": 9,
+    "fast_activity_duration_s": 10.0,
+    "ink_frac": 0.3567,
+    "max_col_frac": 0.3971,
+    "n_complexes": 1
+  },
+  {
+    "run": "seed002__sequential_noH",
+    "epoch": 63,
+    "S": 19.1,
+    "cross_cols": 0,
+    "n_active_channels": 7,
+    "fast_activity_duration_s": 10.0,
+    "ink_frac": 0.3575,
+    "max_col_frac": 0.3971,
+    "n_complexes": 1
+  },
+  {
+    "run": "seed001__sequential_H",
+    "epoch": 99,
+    "S": 20.4,
+    "cross_cols": 188,
+    "n_active_channels": 28,
+    "fast_activity_duration_s": 1.24,
+    "ink_frac": 0.0422,
+    "max_col_frac": 0.5894,
+    "n_complexes": 2
+  },
+  {
+    "run": "seed003__sequential_H",
+    "epoch": 27,
+    "S": 18.9,
+    "cross_cols": 43,
+    "n_active_channels": 8,
+    "fast_activity_duration_s": 0.91,
+    "ink_frac": 0.0091,
+    "max_col_frac": 0.2288,
+    "n_complexes": 2
+  }
+]
