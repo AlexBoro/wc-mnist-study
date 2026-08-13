@@ -182,13 +182,52 @@ All 27 unit tests pass (`test_bias_override.py`, `test_connectivity_invariants.p
 
 Ready. Nothing outstanding in code.
 
-- `handoff/design_500x3.csv` — 1500 rows, plus five shard files
-- `RUN_PARAM_EXPLORE.ipynb` — pilot-first; **run `N_SEEDS = 20` and the four
-  §7 checks before raising it.** The checks are: completeness, LFP span
-  calibration, regime occupancy, and flat-drive.
+**The sweep is 500 seeds × 3 configurations = 1500 runs, with parameters drawn
+from uniform distributions WITHOUT regard to where the seizure boundary is
+thought to lie** (user's specification, 2026-08-13). Every range is already what
+`wc_config.py` does — verified, no edits needed:
+
+| quantity | range | source |
+|---|---|---|
+| `bias_e` | `U(-8, 0)` | `BIAS_E_INIT_MIN/MAX` |
+| `bias_i` | `U(-12, 0)` | `BIAS_I_INIT_MIN/MAX` |
+| `H0` (per unit) | `U(0, 0.15)` | `H_INIT_MIN/MAX` |
+| configs | simultaneous, sequential_noH, sequential_H | `cfg.make_configs()` |
+
+`bias_e_override` / `bias_i_override` default to `None`, so biases are drawn, not
+prescribed.
+
+**Notebook knobs for this run:**
+
+```
+N_SEEDS = 500
+ARMS    = None      # NOT cfg.PILOT_COEFF_ARMS
+```
+
+`ARMS` is unrelated to biases — it splits each run across three values of the
+E→E coefficient (`w075`/`w100`/`w150`), which would make this 4500 runs. `None`
+uses the study default `W_CELOC = W_CEREM = 0.10`. At 1500 runs: ≈ 1.5–2 h,
+≈ 7 GB.
+
+**`handoff/design_500x3.csv` is NOT this sweep — do not use it.** It prescribes
+bias pairs selected to sit past the boundary (353 of 500 seeds, 71%), which is
+the opposite of drawing without regard to the boundary. Same for
+`build_boundary_map.py`, which merges that design on `["config","seed"]` and
+plots the DESIGN coordinates: with random draws, plot each run's realized
+`bias_e`/`bias_i` from the master log instead (`_collect_params` records them
+from `model.bias_e`). Plotting design coordinates would also mask a failed
+override — the point lands where it was meant to regardless.
+
+**Expect ~31% of seeds in the seizure region** (~465 of 1500). That is the
+correct behaviour for an unbiased sample, and it is exactly why the 2026-08-01
+six-seed smoke test looked dead. A low seizure count is not a defect — check the
+bias draws against the fitted boundary before concluding anything is broken.
+
+**Other notes:**
+
+- Run `N_SEEDS = 20` and the four §7 notebook checks before raising to 500:
+  completeness, LFP span calibration, regime occupancy, flat-drive.
 - E→E init scale: `CELOC_INIT_SCALE = CEREM_INIT_SCALE = U(-0.6, 3.0)`
-- `PILOT_COEFF_ARMS = {w075: 0.075, w100: 0.100, w150: 0.150}`; study default
-  `W_CELOC = W_CEREM = 0.10`
 - `cfg.LFP_SPAN` is provisional — recalibrate from the pilot in §7 check 2,
   which is what `render_run(return_stats=True)` exists for. Changing it does not
   change the model fingerprint.
