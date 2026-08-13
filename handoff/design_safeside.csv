@@ -1,0 +1,13 @@
+config,seed,bias_e,bias_i,depth
+simultaneous,1101,-1.2,-2.068,-1.4
+sequential_noH,1101,-1.2,-3.5700000000000007,-1.4
+sequential_H,1101,-1.2,-4.038,-1.4
+simultaneous,1102,-2.0,-3.0600000000000005,-2.2
+sequential_noH,1102,-2.0,-4.45,-2.2
+sequential_H,1102,-2.0,-4.989999999999999,-2.2
+simultaneous,1103,-3.4,-5.396000000000001,-3.0
+sequential_noH,1103,-3.4,-6.59,-3.0
+sequential_H,1103,-3.4,-7.256,-3.0
+simultaneous,1104,-2.8,-3.3520000000000003,-3.7
+sequential_noH,1104,-2.8,-4.63,-3.7
+sequential_H,1104,-2.8,-5.242,-3.7

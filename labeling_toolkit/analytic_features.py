@@ -55,7 +55,8 @@ _MIN_PROM_SPACING = 0.15
 _SHARP_MAX_MS = 200.0
 
 
-def lfp_from_arrays(run_dir, reconstruct_connectivity, cfg, wc_figures):
+def lfp_from_arrays(run_dir, reconstruct_connectivity, cfg, wc_figures,
+                    lead_in=None):
     """Rebuild the filtered LFP proxy exactly as ``wc_figures.save_lfp`` plots it.
 
     Returns ``(filt, times, sample_rate, offset)`` where ``filt`` is
@@ -65,12 +66,27 @@ def lfp_from_arrays(run_dir, reconstruct_connectivity, cfg, wc_figures):
     The coefficient handling mirrors ``save_lfp``: the proxy IS the model's
     excitatory update line restricted to the electrode rows, so the run's own
     ``w_celoc``/``w_cerem`` are used, not the config defaults.
+
+    ``lead_in`` (seconds, default ``cfg.LEAD_IN_S``) drops the opening window
+    BEFORE filtering, matching ``param_render.render_run`` so the analytic and
+    pixel features describe the same window.  This matters: the classifier reads
+    the analytic amplitude (``classifier.SPIKE_AMP_FEATURE``), so trimming only
+    the rendered figures would leave the epileptiform gate measuring the opening
+    transient.  Pass ``lead_in=0.0`` for the untrimmed measure.
     """
     run_dir = Path(run_dir)
     z = np.load(run_dir / "arrays.npz")
     E = z["E_traj"].astype(float)
     I = z["I_traj"].astype(float)
     t = z["times"].astype(float)
+
+    # Measurement window -- see the ``lead_in`` note above. Guarded identically
+    # to render_run so a lead-in longer than the run cannot empty the arrays.
+    _lead = float(getattr(cfg, "LEAD_IN_S", 0.0) if lead_in is None else lead_in)
+    if _lead > 0.0 and len(t) > 1:
+        _k = int(np.searchsorted(t, t[0] + _lead))
+        if 0 < _k < len(t) - 1:
+            E, I, t = E[_k:], I[_k:], t[_k:]
     man = json.loads((run_dir / "manifest.json").read_text())
     seed, cname = int(man["seed"]), str(man["config_name"])
     arm = str(man.get("arm", "") or "")
@@ -135,10 +151,13 @@ def transient_features(filt, sr, offset):
     )
 
 
-def extract(run_dir, reconstruct_connectivity, cfg, wc_figures):
-    """Full analytic feature dict for one run directory."""
+def extract(run_dir, reconstruct_connectivity, cfg, wc_figures, lead_in=None):
+    """Full analytic feature dict for one run directory.
+
+    ``lead_in`` is forwarded to ``lfp_from_arrays``; None means cfg.LEAD_IN_S.
+    """
     filt, _t, sr, offset = lfp_from_arrays(
-        run_dir, reconstruct_connectivity, cfg, wc_figures)
+        run_dir, reconstruct_connectivity, cfg, wc_figures, lead_in=lead_in)
     out = transient_features(filt, sr, offset)
     out["lfp_offset"] = offset
     return out

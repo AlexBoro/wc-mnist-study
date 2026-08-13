@@ -33,6 +33,24 @@ IMAGE_DURATION = 0.25                     # seconds (250 ms) per image
 OUTPUT_AVERAGE_WINDOW = 0.01              # seconds (10 ms) output-averaging window
 MNIST_INPUT_SCALE = 3.0                   # external-input gain on pixel intensities
 
+# Opening window excluded from FEATURE EXTRACTION only -- never from simulation
+# or from arrays.npz.  Two independent artefacts live in the first ~1 s:
+#   1. The probe IC (E0 ~ U(0, IC_E_MAX)) puts most of the population above
+#      threshold, so sample 0 is relaxation from the initial condition, not a
+#      response to the first stimulus.  Measured: 760/784 units fire in the
+#      opening transient, then activity drops 25-fold.
+#   2. save_lfp's zero-phase 4th-order 1 Hz high-pass rings on the step-like
+#      opening.  Measured step response: 0.62 s to fall to 10% of peak, 0.71 s
+#      to 5%, 1.63 s to 1%.  Padding does NOT shorten this (it is the filter's
+#      genuine step response, not an initialisation artefact).
+# 1.0 s clears (1) outright and puts (2) below ~5% of peak, at a cost of 10% of
+# a 10 s run.  Verified on the 8 near-silent safe-side runs: labels are
+# IDENTICAL at 0.5 s and 1.0 s (amp_prominence differs by <=0.007), but at 1.0 s
+# no run's labelling peak falls inside the ringing window -- at 0.5 s two did
+# (seeds 1104, peak at t=0.88 s).  Resolved at CALL time, so a notebook can set
+# cfg.LEAD_IN_S with no re-import.
+LEAD_IN_S = 1.0                           # seconds excluded from measurement
+
 # =============================================================================
 # Core training control (cell 7 / §4 of the spec)
 # =============================================================================
@@ -109,7 +127,19 @@ TAU_H_MIN, TAU_H_MAX = 0.01, 10.0
 #
 # The genuine probe/training difference is in the OTHER state variables (E0/I0,
 # see IC_E_MAX/IC_I_MAX below), which is faithful to the reference.
-H_INIT_MIN, H_INIT_MAX = 0.0, 0.01
+#
+# 2026-08-13: H_INIT_MAX raised 0.01 -> 0.15 on the 22-seed dose response
+# (h0_dose_summary.csv).  At H0 ~ 0 adaptation starts fully discharged and the
+# network must charge it up; that charging transient IS the opening burst that
+# was being labelled GSW.  Raising the bound removes those artefactual
+# transients while leaving genuine sustained seizures intact -- the class
+# transition matrix is strictly lower-triangular and no sustained run was lost.
+# Separation (seizure median / GSW median) improves 8.3x -> 20.1x.  0.15 is
+# equilibrium-consistent: mean H0 = 0.075 against an E operating point of 0.138.
+# Do NOT raise further -- at 1.0 the t=0 adaptation term overlaps |bias_e| and
+# flattens every class to silence (separation 1.2x, 2/22 runs active).
+# NOTE: this invalidates bundles generated at 0.01 as a like-for-like set.
+H_INIT_MIN, H_INIT_MAX = 0.0, 0.15
 # Initial state of the free-running probe: E0 ~ U(0, IC_E_MAX), I0 ~ U(0, IC_I_MAX).
 # These are the 6/28/26 notebook's values (run_exploration_simulation, IC_E_MAX=IC_I_MAX=1.0).
 # The repo previously started the probe at E=I=0, which is a different basin for a

@@ -70,7 +70,7 @@ def _reconstruct_connectivity(seed: int, config_name: str, arm: str = "",
 
 def render_run(fig_dir, E_traj, I_traj, times, seed, config_name,
                image_duration=None, dpi=150, arm="", span=None,
-               return_stats=False):
+               return_stats=False, lead_in=None):
     """Render heatmap_E.png + lfp.png into ``fig_dir`` from arrays.
 
     ``arm`` selects the pilot coefficient variant, which the LFP proxy needs: the
@@ -80,6 +80,15 @@ def render_run(fig_dir, E_traj, I_traj, times, seed, config_name,
 
     ``return_stats=True`` returns the LFP peak-deflection statistics, which is how
     cfg.LFP_SPAN gets recalibrated from the pilot rather than set by eye.
+
+    ``lead_in`` (seconds, default cfg.LEAD_IN_S) drops the opening window before
+    rendering, so the opening relaxation transient and the high-pass filter's
+    step response do not reach the pixel features.  The arrays passed in are NOT
+    modified and the stored bundle is untouched -- this is a measurement-window
+    choice, not a data edit.  The slice happens BEFORE save_lfp so the filter
+    runs on the trimmed signal; verified equivalent to filtering first and then
+    trimming (max difference 0.028 spacing units, no label changes).  Pass
+    ``lead_in=0.0`` to reproduce the untrimmed figures.
     """
     fig_dir = Path(fig_dir)
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -89,6 +98,15 @@ def render_run(fig_dir, E_traj, I_traj, times, seed, config_name,
     E = np.asarray(E_traj, dtype=np.float32)
     I = np.asarray(I_traj, dtype=np.float32)
     t = np.asarray(times, dtype=np.float32)
+
+    # Measurement window: drop the opening lead-in (see cfg.LEAD_IN_S). Guarded
+    # so a lead-in longer than the run cannot empty the arrays -- a short run
+    # renders untrimmed rather than raising.
+    _lead = float(cfg.LEAD_IN_S if lead_in is None else lead_in)
+    if _lead > 0.0 and len(t) > 1:
+        _k = int(np.searchsorted(t, t[0] + _lead))
+        if 0 < _k < len(t) - 1:
+            E, I, t = E[_k:], I[_k:], t[_k:]
 
     # E-activity heatmap (fixed 0-1 viridis)
     tag = f"{config_name} seed{seed:03d}" + (f" [{arm}]" if arm else "")
@@ -112,19 +130,22 @@ def render_run(fig_dir, E_traj, I_traj, times, seed, config_name,
 
 
 def render_from_result(out_root, result, image_duration=None, arm="",
-                       span=None, return_stats=False):
-    """render_fn adapter for param_persist.run_sweep(render_fn=...)."""
+                       span=None, return_stats=False, lead_in=None):
+    """render_fn adapter for param_persist.run_sweep(render_fn=...).
+
+    ``lead_in`` is forwarded to render_run; None means cfg.LEAD_IN_S.
+    """
     from param_persist import run_dir
     arm = arm or str(result.params.get("arm", "") or "")
     d = run_dir(out_root, result.config_name, result.seed, arm)
     return render_run(d / "figures", result.E_traj, result.I_traj, result.times,
                       result.seed, result.config_name,
                       image_duration=image_duration, arm=arm, span=span,
-                      return_stats=return_stats)
+                      return_stats=return_stats, lead_in=lead_in)
 
 
 def render_from_bundle(out_root, config_name, seed, image_duration=None, arm="",
-                       span=None, return_stats=False):
+                       span=None, return_stats=False, lead_in=None):
     """Re-render figures from a saved bundle (post-hoc).
 
     Coefficients come from the bundle's own params.json, not from the current
@@ -138,4 +159,4 @@ def render_from_bundle(out_root, config_name, seed, image_duration=None, arm="",
     return render_run(d / "figures", arrays["E_traj"], arrays["I_traj"],
                       arrays["times"], seed, config_name,
                       image_duration=image_duration, arm=arm, span=span,
-                      return_stats=return_stats)
+                      return_stats=return_stats, lead_in=lead_in)
