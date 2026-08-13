@@ -320,6 +320,12 @@ def relocate_bundles(out_root: Path, n_workers: int, bundle_root: Path) -> int:
                     continue
                 if run.is_symlink():
                     continue        # grafted resume link, already canonical
+                if not (run / "manifest.json").exists():
+                    continue        # in-flight or failed: save_bundle writes
+                                    # arrays.npz -> params.json -> manifest.json,
+                                    # manifest LAST, so its absence means the run
+                                    # is not finished.  This gate is what makes
+                                    # the call safe to run mid-shard.
                 dest = bundle_root / cfg_dir.name / run.name
                 if dest.exists():
                     continue
@@ -428,9 +434,16 @@ def main():
                       f"({(time.time()-t0)/60:.1f}m)", flush=True)
         if not alive:
             break
+        # Drain finished bundles to the durable tree AS WE GO, not just at the
+        # end.  A preemption or timeout at minute 14 of 15 would otherwise
+        # discard every run the shard had completed -- the runs were on the
+        # container's ephemeral disk, and only relocate_bundles puts them on the
+        # Volume.  Safe mid-flight because relocate_bundles skips any run dir
+        # without manifest.json, which save_bundle writes last.
+        n_drained = relocate_bundles(out_root, len(chunks), bundle_root)
         n_done = sum(1 for _ in bundle_root.rglob("manifest.json"))
         print(f"[hb] {(time.time()-t0)/60:6.1f}m  workers_alive={len(alive)}  "
-              f"bundles_in_tree={n_done}", flush=True)
+              f"bundles_in_tree={n_done}  drained_now={n_drained}", flush=True)
         time.sleep(60)
     for _k, _p, _s, lf in procs:
         lf.close()
