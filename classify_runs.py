@@ -39,7 +39,8 @@ from pathlib import Path
 CONFIGS = ["simultaneous", "sequential_noH", "sequential_H"]
 
 # Columns emitted, in order. Identity first, then features, then verdict.
-ID_COLS = ["run_id", "config_name", "seed", "input_mode", "alpha_H", "tau_H"]
+ID_COLS = ["run_id", "config_name", "seed", "input_mode", "alpha_H", "tau_H",
+           "fingerprint", "code_tag"]
 FEAT_COLS = [
     "ink_frac", "max_col_frac", "band_score", "n_complexes",
     "max_IDI", "min_IDI", "median_IDI", "sustained_fraction",
@@ -106,19 +107,76 @@ def _iter_runs(out_root):
 
 
 def _read_identity(run_dir, cname, seed):
-    """Pull identity fields from params.json (falls back to dir name)."""
+    """Pull identity fields from params.json (falls back to dir name).
+
+    `fingerprint` and `code_tag` are carried through deliberately: run_id is
+    seed<NNN>__<config> and therefore NOT unique across parameter-exploration
+    sweeps, so the labels CSV must record WHICH sweep it describes. The
+    adjudication tooling reads these columns to refuse cross-corpus joins.
+    """
     ident = dict(run_id=f"seed{seed:03d}__{cname}", config_name=cname, seed=seed,
-                 input_mode="", alpha_H="", tau_H="")
+                 input_mode="", alpha_H="", tau_H="", fingerprint="", code_tag="")
     pj = run_dir / "params.json"
     if pj.exists():
         try:
             p = json.load(open(pj))
-            for k in ("input_mode", "alpha_H", "tau_H"):
+            for k in ("input_mode", "alpha_H", "tau_H", "fingerprint", "code_tag"):
                 if k in p:
                     ident[k] = p[k]
         except Exception:
             pass
     return ident
+
+
+def _corpus_str(fingerprint, code_tag):
+    """Canonical corpus identity string (delegates to apply_overrides)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from apply_overrides import corpus_id
+    return corpus_id(code_tag, fingerprint)
+
+
+def _corpus_verdict(a, b):
+    """Delegate to apply_overrides -- ONE authority for corpus comparison.
+
+    Do not reimplement: the comparison is subtle (a matching model fingerprint
+    is NOT a corpus match, because the fingerprint excludes tau_H's sampling
+    range and both corpora therefore carry a3dee49abc12). Two copies of that
+    logic would drift.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from apply_overrides import corpus_verdict
+    return corpus_verdict(a, b)
+
+
+def _rows_corpus(rows):
+    """Corpus identity shared by a list of CSV dict rows, or "" if unknown.
+    Raises if the rows disagree -- such a file already mixes corpora."""
+    seen = {_corpus_str(r.get("fingerprint"), r.get("code_tag")) for r in rows}
+    seen.discard("")
+    if len(seen) > 1:
+        raise SystemExit(f"labels file mixes corpora: {sorted(seen)[:4]}")
+    return seen.pop() if seen else ""
+
+
+def _tree_corpus(out_root):
+    """Corpus identity of a bundle tree, read from the runs' params.json.
+    Samples up to 50 runs; raises if they disagree."""
+    seen = set()
+    for i, (cname, seed, rd) in enumerate(_iter_runs(out_root)):
+        pj = Path(rd) / "params.json"
+        if pj.exists():
+            try:
+                p = json.load(open(pj))
+                c = _corpus_str(p.get("fingerprint"), p.get("code_tag"))
+                if c:
+                    seen.add(c)
+            except Exception:
+                pass
+        if i >= 49:
+            break
+    if len(seen) > 1:
+        raise SystemExit(f"bundle tree mixes corpora: {sorted(seen)[:4]}")
+    return seen.pop() if seen else ""
 
 
 def _find_fig(run_dir, name):
@@ -218,7 +276,8 @@ def _write_csv(csv_path, rows_by_id):
                                     int(r["seed"])))
     tmp = str(csv_path) + ".tmp"
     with open(tmp, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=ALL_COLS, extrasaction="ignore")
+        w = csv.DictWriter(f, fieldnames=ALL_COLS, extrasaction="ignore",
+                           lineterminator="\n")
         w.writeheader()
         w.writerows(ordered)
     os.replace(tmp, csv_path)
@@ -229,13 +288,40 @@ def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=Tr
     F, C = _load_toolkit(toolkit_dir)
     csv_path = Path(csv_path)
 
-    # resume: load existing rows keyed by run_id
+    # Resume: load existing rows keyed by run_id.
+    #
+    # PROVENANCE GUARD. run_id is seed<NNN>__<config>, which is identical across
+    # different parameter-exploration sweeps. So an existing CSV from ANOTHER
+    # sweep would resume "successfully": every run_id matches, every row is
+    # skipped, and the output silently carries the OTHER corpus's labels. Refuse
+    # to resume unless the existing file's corpus matches the bundle tree's.
     rows = {}
     if csv_path.exists() and not force:
-        for r in csv.DictReader(open(csv_path)):
+        existing = list(csv.DictReader(open(csv_path)))
+        tree_corpus = _tree_corpus(out_root)
+        file_corpus = _rows_corpus(existing)
+        from_apply = _corpus_verdict(tree_corpus, file_corpus)
+        if from_apply == "conflict":
+            raise SystemExit(
+                f"REFUSING to resume: {csv_path} describes corpus "
+                f"{file_corpus!r} but the bundle tree at {out_root} is "
+                f"{tree_corpus!r}. run_id collides across sweeps, so resuming "
+                f"would keep the other corpus's labels. Use --force to "
+                f"re-classify from scratch, or write to a different --csv.")
+        elif from_apply != "match":
+            print(f"WARNING cannot CONFIRM that {csv_path} belongs to the bundle "
+                  f"tree at {out_root}: file={file_corpus or '<none>'} "
+                  f"tree={tree_corpus or '<none>'}. A matching model fingerprint "
+                  f"is not sufficient (it excludes tau_H's sampling range, so "
+                  f"different sweeps share one) -- only a code_tag on both sides "
+                  f"confirms a match. Resuming anyway, since resume only skips "
+                  f"rows it can re-derive; pass --force to reclassify from "
+                  f"scratch if this file might be from another sweep.")
+        for r in existing:
             rows[r["run_id"]] = r
         if verbose:
-            print(f"resuming: {len(rows)} rows already classified")
+            print(f"resuming: {len(rows)} rows already classified"
+                  + (f" (corpus {file_corpus})" if file_corpus else ""))
 
     all_runs = list(_iter_runs(out_root))
     n_total = len(all_runs)

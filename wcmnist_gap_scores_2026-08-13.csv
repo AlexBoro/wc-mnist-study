@@ -1,0 +1,9 @@
+run_id,config,model_label,model_code,decision,your_label,your_code,agreed,reason,gap_rule,gap_verdict,scored_at,corpus
+seed037__simultaneous,simultaneous,epileptiform (review),-1,hand_score,none,0,no,hand-scored gap run: classifier fell through to review_marginal,review_marginal,0,2026-08-13T21:23:58.612Z,tag=param-explore-v3;fp=a3dee49abc12
+seed127__simultaneous,simultaneous,epileptiform (review),-1,hand_score,none,0,no,hand-scored gap run: classifier fell through to review_marginal,review_marginal,0,2026-08-13T21:24:02.428Z,tag=param-explore-v3;fp=a3dee49abc12
+seed140__simultaneous,simultaneous,epileptiform (review),-1,hand_score,none,0,no,hand-scored gap run: classifier fell through to review_marginal,review_marginal,0,2026-08-13T21:24:05.012Z,tag=param-explore-v3;fp=a3dee49abc12
+seed192__simultaneous,simultaneous,epileptiform (review),-1,hand_score,FIS,1,no,hand-scored gap run: classifier fell through to review_marginal,review_marginal,1,2026-08-13T21:24:08.700Z,tag=param-explore-v3;fp=a3dee49abc12
+seed233__simultaneous,simultaneous,epileptiform (review),-1,hand_score,FIS,1,no,hand-scored gap run: classifier fell through to review_marginal,review_marginal,1,2026-08-13T21:24:11.844Z,tag=param-explore-v3;fp=a3dee49abc12
+seed248__simultaneous,simultaneous,epileptiform (review),-1,hand_score,FIS,1,no,hand-scored gap run: classifier fell through to review_marginal,review_marginal,1,2026-08-13T21:24:14.612Z,tag=param-explore-v3;fp=a3dee49abc12
+seed318__simultaneous,simultaneous,epileptiform (review),-1,hand_score,FIS,1,no,hand-scored gap run: classifier fell through to review_marginal,review_marginal,1,2026-08-13T21:24:19.020Z,tag=param-explore-v3;fp=a3dee49abc12
+seed457__simultaneous,simultaneous,epileptiform (review),-1,hand_score,none,0,no,hand-scored gap run: classifier fell through to review_marginal,review_marginal,0,2026-08-13T21:24:40.188Z,tag=param-explore-v3;fp=a3dee49abc12

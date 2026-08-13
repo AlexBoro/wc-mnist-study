@@ -1,0 +1,9 @@
+run_id,human_code,human_label_name,reason,auto_code_when_recorded,corpus
+seed037__simultaneous,0,none (0),hand-scored gap run: classifier fell through to review_marginal,-1,tag=param-explore-v3;fp=a3dee49abc12
+seed127__simultaneous,0,none (0),hand-scored gap run: classifier fell through to review_marginal,-1,tag=param-explore-v3;fp=a3dee49abc12
+seed140__simultaneous,0,none (0),hand-scored gap run: classifier fell through to review_marginal,-1,tag=param-explore-v3;fp=a3dee49abc12
+seed192__simultaneous,1,FIS (1),hand-scored gap run: classifier fell through to review_marginal,-1,tag=param-explore-v3;fp=a3dee49abc12
+seed233__simultaneous,1,FIS (1),hand-scored gap run: classifier fell through to review_marginal,-1,tag=param-explore-v3;fp=a3dee49abc12
+seed248__simultaneous,1,FIS (1),hand-scored gap run: classifier fell through to review_marginal,-1,tag=param-explore-v3;fp=a3dee49abc12
+seed318__simultaneous,1,FIS (1),hand-scored gap run: classifier fell through to review_marginal,-1,tag=param-explore-v3;fp=a3dee49abc12
+seed457__simultaneous,0,none (0),hand-scored gap run: classifier fell through to review_marginal,-1,tag=param-explore-v3;fp=a3dee49abc12

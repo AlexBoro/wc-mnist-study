@@ -1,3 +1,3 @@
-run_id,human_code,human_label_name,reason,auto_code_when_recorded
-seed145__simultaneous,2,FPFA (2),sustained rhythmic spike train on adjacent channels (cross_cols=47) that FPFA should cover; classifier.py has no FPFA rule arm so code 2 is human-override-only,1
-seed281__simultaneous,3,FSW (3),"broad synchronized wave-form spread over 15+ channels under-read by the sharp-transient detector (sync_spike_extent=2); genuine spread, sub-threshold sharpness",1
+run_id,human_code,human_label_name,reason,auto_code_when_recorded,corpus
+seed145__simultaneous,2,FPFA (2),sustained rhythmic spike train on adjacent channels (cross_cols=47) that FPFA should cover; classifier.py has no FPFA rule arm so code 2 is human-override-only,1,tag=pre-v3-sweep-2026-07-28
+seed281__simultaneous,3,FSW (3),"broad synchronized wave-form spread over 15+ channels under-read by the sharp-transient detector (sync_spike_extent=2); genuine spread, sub-threshold sharpness",1,tag=pre-v3-sweep-2026-07-28
