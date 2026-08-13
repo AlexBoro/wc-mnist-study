@@ -100,7 +100,7 @@ def bundle_fingerprint(out_root, config_name, seed, arm="") -> str:
 
 
 def is_complete(out_root, config_name, seed, expected_T=None, arm="",
-                expect_fingerprint=None) -> bool:
+                expect_fingerprint=None, require_figures=True) -> bool:
     """Fast completion check for the resumable driver.
 
     ``save_bundle`` writes arrays.npz -> params.json -> manifest.json (manifest
@@ -123,6 +123,16 @@ def is_complete(out_root, config_name, seed, expected_T=None, arm="",
     arr, par, man = d / "arrays.npz", d / "params.json", d / "manifest.json"
     if not (arr.exists() and par.exists() and man.exists()):
         return False
+    if require_figures:
+        # 12 of the 13 classifier inputs are pixel-derived from lfp.png, so a
+        # bundle without figures is not a usable run however intact its arrays
+        # are.  Needed for bundles written before figures preceded the manifest:
+        # those can carry a manifest and no figures, and without this check
+        # resume calls them complete and skips them permanently.  Two stat calls,
+        # no decode -- cheap enough to leave on by default.
+        figs = d / "figures"
+        if not all((figs / n).exists() for n in ("heatmap_E.png", "lfp.png")):
+            return False
     if expect_fingerprint:
         got = bundle_fingerprint(out_root, config_name, seed, arm)
         if got != str(expect_fingerprint):
@@ -143,8 +153,65 @@ def is_complete(out_root, config_name, seed, expected_T=None, arm="",
 # ---------------------------------------------------------------------------
 # save
 # ---------------------------------------------------------------------------
+def _call_render(render_fn, out_root, result, arm):
+    """Invoke a render_fn that may or may not accept an ``arm`` keyword.
+
+    Decided by signature inspection, NOT by catching TypeError.  The previous
+    try/except TypeError form was wrong in a way that mattered: any TypeError
+    raised INSIDE a render that does accept `arm` was indistinguishable from a
+    signature mismatch, so the render was silently re-run positionally and the
+    real error surfaced (if at all) as a confusing second failure.  It also hid
+    the actual worker signature bug for a full sweep -- the driver's own wrapper
+    took `_arm`, not `arm`, so every call took the fallback path.
+    """
+    import inspect
+
+    try:
+        params = inspect.signature(render_fn).parameters
+        takes_arm = ("arm" in params or
+                     any(p.kind is inspect.Parameter.VAR_KEYWORD
+                         for p in params.values()))
+    except (TypeError, ValueError):
+        takes_arm = False        # builtins/C callables: no signature available
+    if takes_arm:
+        return render_fn(out_root, result, arm=arm)
+    return render_fn(out_root, result)
+
+
 def save_bundle(out_root, result: PE.ExplorationResult, code_tag="",
-                repo_dir=None, compress=True, arm="", model_fingerprint=None) -> Path:
+                repo_dir=None, compress=True, arm="", model_fingerprint=None,
+                render_fn=None) -> Path:
+    """Write one run's bundle: arrays.npz -> params.json -> FIGURES -> manifest.json.
+
+    ``render_fn(out_root, result, arm=...)`` is called here, between params.json
+    and manifest.json, rather than by the caller after this returns.  That
+    ordering is load-bearing and not stylistic:
+
+    The multiprocess driver's parent drains finished runs to the shared Volume
+    mid-flight, and it decides "finished" by the presence of manifest.json (see
+    run_modal_sweep.relocate_bundles).  When rendering happened AFTER this
+    function returned, every run had a window in which the manifest existed but
+    the figures did not -- and the parent, doing exactly what it was told, moved
+    the directory out from under the still-running render.  savefig then raised
+    FileNotFoundError inside the worker.  Observed on 2026-08-14: of the 32
+    workers whose exit code was recorded (8 of 10 shards; shards 6 and 9 were
+    cancelled before reporting), 20 died this way -- and the shard-level failure
+    counter reported 0 for every one of them, because the crash killed the worker
+    rather than being caught per-run.
+
+    Rendering before the manifest closes the window: no manifest means the
+    directory is not eligible for relocation, so the render always writes into a
+    stable path.  The invariant the whole driver leans on -- "manifest.json
+    exists => this run is complete and self-contained" -- becomes true, where
+    before it was true only of the arrays.
+
+    A render failure therefore leaves NO manifest, so the run is not complete and
+    resume will redo it.  That is deliberate: the classifier reads pixels out of
+    lfp.png, so a bundle without figures is not a usable run.  A deterministic
+    render bug will be retried on every restart, which is loud (it shows up in
+    failures.jsonl and the failure count) rather than silently dropping runs from
+    the corpus -- the failure mode this replaced.
+    """
     d = run_dir(out_root, result.config_name, result.seed, arm)
     d.mkdir(parents=True, exist_ok=True)
 
@@ -158,6 +225,14 @@ def save_bundle(out_root, result: PE.ExplorationResult, code_tag="",
     # params
     with open(d / "params.json", "w") as f:
         json.dump(result.params, f, indent=2)
+
+    # figures — BEFORE the manifest, see the docstring.  Called via the shared
+    # adapter so a render_fn that does not accept `arm` is handled by signature
+    # inspection rather than by catching TypeError (a TypeError raised deep
+    # inside the render would otherwise be misread as a signature mismatch and
+    # trigger a bogus positional retry).
+    if render_fn is not None:
+        _call_render(render_fn, out_root, result, arm)
 
     # manifest — full reconstruction key
     manifest = dict(
@@ -331,9 +406,16 @@ def run_sweep(out_root, seeds, config_names=None, device=None,
                         record_stride=record_stride, dtype_out=dtype_out,
                         h_init_max=h_init_max, h_init_mode=h_init_mode,
                         verbose=False)
+                    # render_fn is handed to save_bundle so the figures land
+                    # BEFORE manifest.json, which is what makes a drained bundle
+                    # complete-or-absent rather than complete-looking-but-
+                    # figureless.  See save_bundle's docstring.  Consequence: a
+                    # render failure now fails the RUN (no manifest, redone on
+                    # resume) instead of leaving a figure-less bundle that resume
+                    # skips forever and the pixel classifier cannot read.
                     save_bundle(out_root, result, code_tag=code_tag,
                                 repo_dir=repo_dir, arm=arm_name,
-                                model_fingerprint=fp)
+                                model_fingerprint=fp, render_fn=render_fn)
                     append_log_row(out_root, result, arm=arm_name)
                 except Exception as e:
                     # One bad run must not abandon the other 1499.
@@ -342,14 +424,6 @@ def run_sweep(out_root, seeds, config_names=None, device=None,
                           f"{type(e).__name__}: {e}", flush=True)
                     _append_failure(out_root, arm_name, cname, seed, e)
                     continue
-                if render_fn is not None:
-                    try:
-                        render_fn(out_root, result, arm=arm_name)
-                    except TypeError:
-                        render_fn(out_root, result)
-                    except Exception as e:
-                        print(f"[warn] render failed for {result.run_id}: {e}",
-                              flush=True)
                 done += 1
                 if verbose and (done % 10 == 0 or done == 1):
                     el = time.time() - t_start

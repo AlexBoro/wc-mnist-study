@@ -156,9 +156,13 @@ import param_render as PR
 
 render = None
 if spec["render"]:
-    def render(out_root, result, _arm=""):
+    # Parameter MUST be named `arm`: param_persist._call_render decides by
+    # signature inspection whether the callable accepts it, and the previous
+    # `_arm` spelling meant the arm was silently dropped on every call (harmless
+    # only because this study runs arms=None).
+    def render(out_root, result, arm=""):
         PR.render_from_result(out_root, result,
-                              image_duration=cfg.IMAGE_DURATION, arm=_arm)
+                              image_duration=cfg.IMAGE_DURATION, arm=arm)
 
 summary = PP.run_sweep(
     spec["out_root"],
