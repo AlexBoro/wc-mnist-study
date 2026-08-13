@@ -54,6 +54,7 @@ import argparse
 import csv
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -297,6 +298,14 @@ def relocate_bundles(out_root: Path, n_workers: int, bundle_root: Path) -> int:
     Workers write to out_root/_w<k>/<config>/run_SSS/.  The canonical tree the
     notebook and classifier expect is <bundle_root>/<config>/run_SSS/.  Moving
     (not copying) keeps the 10.3 MB/run cost off the container's disk twice.
+
+    Uses shutil.move, NOT Path.rename: on Modal the two roots are on different
+    devices (/work is the container disk, /vol is the mounted Volume) and
+    os.rename then fails with EXDEV "Invalid cross-device link".  Observed for
+    real -- a shard's runs all completed and the driver then died at the
+    relocate step, which is the worst possible place to fail since the compute
+    was already spent.  shutil.move degrades to copy+unlink across devices;
+    same-filesystem local runs still get the cheap rename.
     """
     moved = 0
     for k in range(n_workers):
@@ -315,7 +324,7 @@ def relocate_bundles(out_root: Path, n_workers: int, bundle_root: Path) -> int:
                 if dest.exists():
                     continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                run.rename(dest)
+                shutil.move(str(run), str(dest))
                 moved += 1
     return moved
 
