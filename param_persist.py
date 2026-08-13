@@ -99,6 +99,29 @@ def bundle_fingerprint(out_root, config_name, seed, arm="") -> str:
     return str(fp.get("hash", "")) if isinstance(fp, dict) else str(fp)
 
 
+def _png_usable(p) -> bool:
+    """True iff p is a PNG that was written to completion.
+
+    Existence alone is not enough.  A worker killed mid-``savefig`` leaves a
+    partial PNG on disk: correct 8-byte signature, plausible size, no terminating
+    chunk.  Three such bundles sat on the durable tree looking complete to a
+    stat-only check while being undecodable (the classifier derives 12 of its 13
+    inputs from lfp.png pixels, so those runs were unusable).
+
+    Checks the trailing IEND chunk, which is the LAST thing a complete PNG
+    contains.  Layout: 4-byte big-endian length (zero for IEND), the 4-byte type
+    tag, then a 4-byte CRC -- so the tag sits at b[-8:-4], NOT b[-12:-8].  I got
+    that offset wrong once and it reported every valid PNG as truncated.
+    Reads 8 bytes, not the image: no decode, cheap enough for the resume scan.
+    """
+    try:
+        with open(p, "rb") as fh:
+            fh.seek(-8, os.SEEK_END)
+            return fh.read(4) == b"IEND"   # b[-8:-4] is the tag; b[-4:] is the CRC
+    except (OSError, ValueError):
+        return False          # absent, or shorter than 8 bytes
+
+
 def is_complete(out_root, config_name, seed, expected_T=None, arm="",
                 expect_fingerprint=None, require_figures=True) -> bool:
     """Fast completion check for the resumable driver.
@@ -131,8 +154,9 @@ def is_complete(out_root, config_name, seed, expected_T=None, arm="",
         # resume calls them complete and skips them permanently.  Two stat calls,
         # no decode -- cheap enough to leave on by default.
         figs = d / "figures"
-        if not all((figs / n).exists() for n in ("heatmap_E.png", "lfp.png")):
-            return False
+        for n in ("heatmap_E.png", "lfp.png"):
+            if not _png_usable(figs / n):
+                return False
     if expect_fingerprint:
         got = bundle_fingerprint(out_root, config_name, seed, arm)
         if got != str(expect_fingerprint):

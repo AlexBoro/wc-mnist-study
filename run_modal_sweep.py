@@ -311,6 +311,13 @@ def relocate_bundles(out_root: Path, n_workers: int, bundle_root: Path) -> int:
     was already spent.  shutil.move degrades to copy+unlink across devices;
     same-filesystem local runs still get the cheap rename.
     """
+    # Imported HERE, not at module scope: param_persist only becomes importable
+    # after main() puts HERE on sys.path, and a module-level import breaks even
+    # `--help`.  The driver needs is_complete to judge whether an existing
+    # destination bundle is good enough to keep.
+    sys.path.insert(0, str(HERE))
+    import param_persist as PP
+
     moved = 0
     for k in range(n_workers):
         wr = out_root / f"_w{k}"
@@ -332,7 +339,25 @@ def relocate_bundles(out_root: Path, n_workers: int, bundle_root: Path) -> int:
                                     # the call safe to run mid-shard.
                 dest = bundle_root / cfg_dir.name / run.name
                 if dest.exists():
-                    continue
+                    # A destination that is already COMPLETE wins: skip, so a
+                    # re-run never churns good data.  But a destination that is
+                    # incomplete (this is exactly why the worker redid the run --
+                    # resume only schedules runs is_complete() rejected) must be
+                    # REPLACED.  Skipping unconditionally here silently discarded
+                    # every repair: on 2026-08-14 all 27 bundles with broken
+                    # figures were correctly regenerated, then dropped at this
+                    # line, and the census showed the same 27 broken afterwards.
+                    seed_s = run.name.split("_", 1)[1]
+                    try:
+                        dest_ok = PP.is_complete(bundle_root, cfg_dir.name,
+                                                 int(seed_s))
+                    except (ValueError, TypeError):
+                        dest_ok = False
+                    if dest_ok:
+                        continue
+                    shutil.rmtree(dest)
+                    print(f"[relocate] replacing incomplete {cfg_dir.name}/"
+                          f"{run.name} on the durable tree", flush=True)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(run), str(dest))
                 moved += 1

@@ -109,7 +109,10 @@ def test_is_complete_rejects_figureless_bundle(tmp_path):
                           require_figures=False)
     (d / "figures").mkdir()
     for n in ("heatmap_E.png", "lfp.png"):
-        (d / "figures" / n).write_bytes(b"x")
+        # Must be a COMPLETE png: is_complete now checks the IEND terminator,
+        # not just existence, so a placeholder byte no longer stands in for a
+        # figure.  See test_is_complete_rejects_truncated_figure.
+        (d / "figures" / n).write_bytes(_png())
     assert PP.is_complete(tmp_path, "simultaneous", 0,
                           expect_fingerprint="deadbeefcafe")
 
@@ -146,3 +149,87 @@ def test_call_render_passes_arm_to_worker_wrapper():
         "worker render wrapper no longer takes `arm`; _call_render will drop it")
     PP._call_render(fake, "o", FakeResult(), "armB")
     assert got["arm"] == "armB"
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-14 (second failure): regenerated repairs silently discarded
+# ---------------------------------------------------------------------------
+# relocate_bundles skipped any destination that already existed.  Resume only
+# schedules runs is_complete() REJECTED, so an existing destination for a
+# rescheduled run is by construction a BAD bundle -- skipping it threw away the
+# repair and kept the damage.  Observed: 27 bundles with broken figures were
+# correctly recomputed, then dropped here; the post-sweep census found the same
+# 27 broken, zero repaired.
+#
+# Second defect found with it: is_complete() checked figure EXISTENCE only, so a
+# PNG truncated by a killed savefig counted as complete and its run could never
+# be rescheduled (3 such bundles were stuck permanently).
+
+def _png(nbytes=200, complete=True):
+    """Minimal byte string shaped like a PNG; IEND-terminated iff complete."""
+    body = b"\x89PNG\r\n\x1a\n" + b"\x00" * nbytes
+    return body + b"\x00\x00\x00\x00IEND\xaeB`\x82" if complete else body
+
+
+def _bundle(base, cfg, seed, png_bytes, manifest=True):
+    d = base / cfg / f"run_{seed:03d}"
+    (d / "figures").mkdir(parents=True, exist_ok=True)
+    np.savez(d / "arrays.npz", E_traj=np.zeros((4, 2), dtype=np.float16))
+    (d / "params.json").write_text("{}")
+    if manifest:
+        (d / "manifest.json").write_text("{}")
+    for n in ("heatmap_E.png", "lfp.png"):
+        (d / "figures" / n).write_bytes(png_bytes)
+    return d
+
+
+def test_png_usable_requires_iend_terminator(tmp_path):
+    good, trunc = tmp_path / "g.png", tmp_path / "t.png"
+    good.write_bytes(_png())
+    trunc.write_bytes(_png(complete=False))
+    assert PP._png_usable(good)
+    assert not PP._png_usable(trunc)
+    assert not PP._png_usable(tmp_path / "absent.png")
+    empty = tmp_path / "e.png"
+    empty.write_bytes(b"")
+    assert not PP._png_usable(empty)      # shorter than the 8-byte seek
+
+
+def test_is_complete_rejects_truncated_figure(tmp_path):
+    """A stat-only check called these complete, stranding the run forever."""
+    _bundle(tmp_path, "simultaneous", 1, _png())
+    _bundle(tmp_path, "simultaneous", 2, _png(complete=False))
+    assert PP.is_complete(tmp_path, "simultaneous", 1)
+    assert not PP.is_complete(tmp_path, "simultaneous", 2)
+
+
+def test_relocate_replaces_incomplete_destination(tmp_path):
+    """The regression proper: a repair must overwrite the damaged bundle."""
+    durable, work = tmp_path / "vol", tmp_path / "work"
+    _bundle(durable, "simultaneous", 7, _png(complete=False))   # damaged
+    _bundle(work / "_w0", "simultaneous", 7, _png())            # freshly repaired
+    moved = RMS.relocate_bundles(work, 1, durable)
+    assert moved == 1
+    assert PP.is_complete(durable, "simultaneous", 7)
+    assert not (work / "_w0" / "simultaneous" / "run_007").exists()
+
+
+def test_relocate_preserves_complete_destination(tmp_path):
+    """Symmetric guard: never clobber good durable data with a worse copy."""
+    durable, work = tmp_path / "vol", tmp_path / "work"
+    _bundle(durable, "simultaneous", 8, _png(nbytes=999))       # good, large
+    _bundle(work / "_w0", "simultaneous", 8, _png(complete=False))
+    moved = RMS.relocate_bundles(work, 1, durable)
+    assert moved == 0
+    assert PP.is_complete(durable, "simultaneous", 8)
+    got = (durable / "simultaneous" / "run_008" / "figures" / "lfp.png").read_bytes()
+    assert len(got) > 999            # still the original, not the truncated one
+    assert (work / "_w0" / "simultaneous" / "run_008").exists()   # left in place
+
+
+def test_relocate_skips_run_without_manifest(tmp_path):
+    """Mid-flight runs must stay put -- this gate makes the drain safe."""
+    durable, work = tmp_path / "vol", tmp_path / "work"
+    _bundle(work / "_w0", "simultaneous", 9, _png(), manifest=False)
+    assert RMS.relocate_bundles(work, 1, durable) == 0
+    assert not (durable / "simultaneous" / "run_009").exists()
