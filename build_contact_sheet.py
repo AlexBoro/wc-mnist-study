@@ -100,6 +100,37 @@ def discover_runs(out_root: Path) -> list[dict]:
     return runs
 
 
+def read_labels(path: Path | None) -> dict[tuple, dict]:
+    """Index a taxonomy-label CSV by (config_name, seed).
+
+    Labels are per-run, and with one arm a row IS a run, so the verdict is
+    shown on the row header where it can be filtered and sorted.  Kept
+    optional: sweeps predating the classifier still build.
+    """
+    if path is None or not Path(path).exists():
+        return {}
+    idx = {}
+    n_rows = 0
+    with open(path, newline="") as f:
+        rd = csv.DictReader(f)
+        # classify_runs.py writes "config_name"; older sheets wrote "config".
+        cfg_key = "config_name" if "config_name" in (rd.fieldnames or []) else "config"
+        if cfg_key not in (rd.fieldnames or []) or "seed" not in (rd.fieldnames or []):
+            raise SystemExit(
+                f"--labels {path}: need a seed column plus 'config_name' or "
+                f"'config'; found {rd.fieldnames}")
+        for row in rd:
+            n_rows += 1
+            try:
+                idx[(str(row[cfg_key]), int(float(row["seed"])))] = row
+            except (KeyError, TypeError, ValueError):
+                continue
+    if n_rows and not idx:
+        # Silent 0-match joins produced unlabelled sheets that looked fine.
+        raise SystemExit(f"--labels {path}: {n_rows} rows, 0 usable keys")
+    return idx
+
+
 def read_master_log(out_root: Path) -> dict[tuple, dict]:
     """Index the sweep-root master log by (arm, config_name, seed)."""
     path = out_root / MASTER_LOG
@@ -241,6 +272,15 @@ main { padding:14px 16px 60px; }
            border-bottom:1px solid var(--edge); }
 .rowhead .id { font-weight:600; font-size:13px; }
 .rowhead .st { color:var(--dim); font-size:11px; font-family:ui-monospace,monospace; }
+.lab { font-family:ui-monospace,monospace; font-size:11px; font-weight:600;
+       padding:1px 7px; border-radius:10px; margin-left:8px;
+       border:1px solid transparent; }
+.lab-sz  { background:#4a1c1c; color:#ff8f8f; border-color:#7a2c2c; }
+.lab-mid { background:#4a3a12; color:#ffce6a; border-color:#7a5f20; }
+.lab-low { background:#1e3320; color:#7fd18c; border-color:#2f5236; }
+.lab-rev { background:#2a2340; color:#b9a6ff; border-color:#453a6b; }
+.conf { color:var(--dim); font-size:10.5px; font-family:ui-monospace,monospace;
+        margin-left:7px; }
 .arms { display:grid; gap:1px; background:var(--edge); }
 .cell { background:var(--card); padding:8px; min-width:0; }
 .cell .armname { font-family:ui-monospace,monospace; font-size:11px;
@@ -274,8 +314,16 @@ function apply() {
   const cf = document.getElementById('f-config').value;
   const fg = document.getElementById('f-fig').value;
   const sk = document.getElementById('f-sort').value;
+  const lbEl = document.getElementById('f-label');
+  const lb = lbEl ? lbEl.value : '*';
   rows.forEach(r => {
-    const ok = (cf === '*' || r.dataset.config === cf);
+    let ok = (cf === '*' || r.dataset.config === cf);
+    if (ok && lb !== '*') {
+      // 'sz' groups the two ictal labels (4 GSW, 5 seizure); every other
+      // choice matches one exact label value.
+      ok = (lb === 'sz') ? ['4','5'].includes(r.dataset.label)
+                         : r.dataset.label === lb;
+    }
     r.classList.toggle('hidden', !ok);
   });
   document.querySelectorAll('.figblock').forEach(b => {
@@ -295,8 +343,10 @@ function apply() {
   const n = rows.filter(r => !r.classList.contains('hidden')).length;
   document.getElementById('count').textContent = n + ' of ' + rows.length + ' rows';
 }
-['f-config','f-fig','f-sort'].forEach(id =>
-  document.getElementById(id).addEventListener('change', apply));
+['f-config','f-fig','f-sort','f-label'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', apply);
+});
 const lb = document.getElementById('lb');
 document.addEventListener('click', e => {
   if (e.target.tagName === 'IMG' && e.target.closest('.cell')) {
@@ -312,9 +362,10 @@ apply();
 """
 
 
-def build_html(runs, log_idx, dyn, out_root: Path, title: str,
+def build_html(runs, log_idx, dyn, out_root: Path, title: str, labels=None,
                sat_thresh=0.75, verbose=True) -> tuple[str, dict]:
     """Assemble the sheet.  Rows are (config, seed); columns are arms."""
+    labels = labels or {}
     arms = sorted({r["arm"] for r in runs})
     configs = sorted({r["config_name"] for r in runs})
     # Group into paired rows so a row is one seed+config across all arms.
@@ -406,6 +457,39 @@ def build_html(runs, log_idx, dyn, out_root: Path, title: str,
                 f'{html.escape(wtxt)}</span></div>'
                 + "".join(figparts) + stat + '</div>')
 
+        # Taxonomy verdict for this row.  Label -1 is the classifier's
+        # "route to human adjudication" fall-through, not a low label, so it
+        # gets its own colour rather than being lumped with "none".
+        lrow = labels.get((cname, seed), {})
+        lab_val = lrow.get("label", "")
+        try:
+            lab_i = int(float(lab_val))
+        except Exception:
+            lab_i = None
+        lab_cls = ("lab-sz" if lab_i in (4, 5) else
+                   "lab-rev" if lab_i == -1 else
+                   "lab-mid" if lab_i in (2, 3) else
+                   "lab-low" if lab_i is not None else "")
+        if lab_i is not None:
+            bits = [f'<span class="lab {lab_cls}">'
+                    f'{html.escape(str(lrow.get("label_name", lab_val)))}</span>']
+            if lrow.get("confidence"):
+                bits.append(f'<span class="conf">conf '
+                            f'{html.escape(str(lrow["confidence"]))}</span>')
+            for k, lb in (("bias_e", "b_e"), ("bias_i", "b_i"),
+                          ("signed_distance", "depth"), ("regime", "")):
+                v = lrow.get(k)
+                if v not in (None, ""):
+                    try:
+                        v = f"{float(v):+.2f}" if k != "regime" else str(v)
+                    except Exception:
+                        v = str(v)
+                    bits.append(f'<span class="conf">{lb}{" " if lb else ""}'
+                                f'{html.escape(v)}</span>')
+            lab_html = " ".join(bits)
+        else:
+            lab_html, lab_i = "", ""
+
         fp_txt = ""
         anyr = next(iter(byarm.values()))
         fpv = anyr["params"].get("fingerprint", "")
@@ -414,9 +498,11 @@ def build_html(runs, log_idx, dyn, out_root: Path, title: str,
         parts.append(
             f'<section class="rowgroup" data-config="{html.escape(cname)}" '
             f'data-order="{cname}|{seed:04d}" data-mean_E="{r_mean}" '
-            f'data-frac_high="{r_high}">'
+            f'data-frac_high="{r_high}" data-label="{lab_i}" '
+            f'data-labelnum="{lab_i if lab_i != "" else "nan"}">'
             f'<div class="rowhead"><span class="id">{html.escape(cname)} '
-            f'&nbsp;seed {seed:03d}</span><span class="st">{fp_txt}</span></div>'
+            f'&nbsp;seed {seed:03d} {lab_html}</span>'
+            f'<span class="st">{fp_txt}</span></div>'
             f'<div class="arms" style="grid-template-columns:'
             f'repeat({max(1,len(arms))},1fr)">' + "".join(cells)
             + '</div></section>')
@@ -426,21 +512,55 @@ def build_html(runs, log_idx, dyn, out_root: Path, title: str,
 
     cfg_opts = "".join(f'<option value="{html.escape(c)}">{html.escape(c)}</option>'
                        for c in configs)
+
+    # Label control + per-config seizure tally.  Rendered only when a label CSV
+    # was supplied, so unlabelled sweeps get the sheet they always got.
+    label_ctl, label_summary = "", ""
+    if labels:
+        seen = {}
+        for (c, sd), lr in labels.items():
+            try:
+                seen[int(float(lr["label"]))] = lr.get("label_name", lr["label"])
+            except Exception:
+                continue
+        opts = "".join(
+            f'<option value="{k}">{html.escape(str(v))}</option>'
+            for k, v in sorted(seen.items()))
+        label_ctl = ('<label>label <select id="f-label">'
+                     '<option value="*">all</option>'
+                     '<option value="sz">seizure (4+5)</option>'
+                     f'{opts}</select></label>')
+        tally = {}
+        for (c, sd), lr in labels.items():
+            try:
+                iv = int(float(lr["label"]))
+            except Exception:
+                continue
+            t = tally.setdefault(c, [0, 0])
+            t[1] += 1
+            if iv in (4, 5):
+                t[0] += 1
+        label_summary = " &nbsp;&middot;&nbsp; ".join(
+            f"{html.escape(c)} <b>{n}/{d}</b> ictal" for c, (n, d) in sorted(tally.items()))
+        label_summary = f'<div class="meta">seizure tally: {label_summary}</div>'
     sort_opts = ('<option value="natural">config, then seed</option>'
                  '<option value="frac_high">saturation (worst arm first)</option>'
-                 '<option value="mean_E">mean E (highest first)</option>')
+                 '<option value="mean_E">mean E (highest first)</option>'
+                 '<option value="labelnum">taxonomy label (worst first)</option>')
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>{html.escape(title)}</title><style>{CSS}</style></head><body>
 <header><h1>{html.escape(title)}</h1>
 <div class="meta">{len(order_keys)} seed&times;config rows &nbsp;&middot;&nbsp;
 {len(runs)} runs &nbsp;&middot;&nbsp; arms: {html.escape(", ".join(arms) or "(unarmed)")}
 &nbsp;&middot;&nbsp; <span id="count"></span></div>
+{label_summary}
 <div class="controls">
 <label>config <select id="f-config"><option value="*">all</option>{cfg_opts}</select></label>
 <label>figure <select id="f-fig"><option value="*">both</option>
 <option value="lfp.png">LFP only</option>
 <option value="heatmap_E.png">heatmap only</option></select></label>
 <label>sort <select id="f-sort">{sort_opts}</select></label>
+{label_ctl}
 </div></header>
 <p class="warn"><b>Thumbnails are downscaled JPEGs &mdash; not calibration-grade.</b>
 Do not read pixel deflections off them or set detector thresholds from them.
@@ -472,6 +592,10 @@ def main(argv=None):
                     help="only seeds <= this (keeps the file small on big sweeps)")
     ap.add_argument("--thumb-width", type=int, default=THUMB_W)
     ap.add_argument("--title", default=None)
+    ap.add_argument("--labels", default=None,
+                    help="taxonomy-label CSV (config,seed,label,label_name,...) "
+                         "as written by classify_pilot.py; adds the verdict "
+                         "badge, label filter and seizure tally")
     a = ap.parse_args(argv)
 
     THUMB_W = int(a.thumb_width)
@@ -503,7 +627,10 @@ def main(argv=None):
 
     title = a.title or f"WC-MNIST param-explore contact sheet — {out_root.name}"
     print("building html ...")
-    doc, info = build_html(runs, log_idx, dyn, out_root, title)
+    labels = read_labels(Path(a.labels) if a.labels else None)
+    if a.labels:
+        print(f"  labels: {len(labels)} runs")
+    doc, info = build_html(runs, log_idx, dyn, out_root, title, labels=labels)
     dest = out_root / a.html
     dest.write_text(doc, encoding="utf-8")
     size_mb = dest.stat().st_size / 1e6

@@ -46,9 +46,28 @@ FEAT_COLS = [
     "vertical_spread_fraction",
     "S", "cross_cols", "n_active_channels", "fast_activity_duration_s",
     "sync_spike_extent",
+    # rev-2 taxonomy (2026-08-11): the features the current RULES actually
+    # decide on.  The block above is kept so older sheets still parse.
+    "involve_contig_dur_s", "n_fpfa_sequences", "fpfa_best_dur_s",
+    "fpfa_best_ratio", "fast_dur_s", "fast_contig_dur_s",
+    "fast_ibi_ratio", "spike_amp_max", "burst_band_dens", "burst_band_frac",
+    "n_fast_channels",
+    # analytic (arrays.npz) LFP measures — see labeling_toolkit/analytic_features.py
+    "amp_prominence", "amp_excursion", "width_ms",
+    "n_chans_prominence_ge1", "n_chans_excursion_ge1", "n_sharp_transients",
 ]
 VERDICT_COLS = ["label", "label_name", "confidence", "rule", "clause", "review"]
+# Array-valued features: which channel-count index to export, and it must match
+# the threshold the RULES test at, or the sheet would show a number the verdict
+# was not based on. Sourced from the classifier so the two cannot drift.
+ARRAY_FEAT_AT = {
+    "involve_contig_dur_s": None,   # filled from classifier.TH at load
+    "fast_contig_dur_s": None,
+}
+
 ALL_COLS = ID_COLS + FEAT_COLS + VERDICT_COLS
+ALL_COLS = [c for c in ALL_COLS if c not in ARRAY_FEAT_AT] + [
+    f"{k}_at{v}" for k, v in ARRAY_FEAT_AT.items() if v]
 
 
 def _load_toolkit(toolkit_dir):
@@ -58,6 +77,16 @@ def _load_toolkit(toolkit_dir):
         sys.path.insert(0, toolkit_dir)
     import features as F      # noqa: E402
     import classifier as C    # noqa: E402
+    # Bind the array-feature export indices to the thresholds the RULES test at,
+    # so the exported column can never report a channel count the verdict was
+    # not based on.
+    TH = getattr(C, "TH", {})
+    ARRAY_FEAT_AT["involve_contig_dur_s"] = TH.get("SEIZ_CONTIG_CHANS")
+    ARRAY_FEAT_AT["fast_contig_dur_s"] = TH.get("SEIZ_CONTIG_CHANS")
+    global ALL_COLS
+    ALL_COLS = [c for c in ID_COLS + FEAT_COLS + VERDICT_COLS
+                if c not in ARRAY_FEAT_AT] + [
+        f"{k}_at{v}" for k, v in ARRAY_FEAT_AT.items() if v]
     return F, C
 
 
@@ -102,6 +131,45 @@ def _find_fig(run_dir, name):
     return run_dir / name  # non-existent; caller checks .exists()
 
 
+_ANALYTIC = {"mod": None, "recon": None, "cfg": None, "figs": None, "ok": None}
+
+
+def _analytic_feats(run_dir):
+    """Analytic (array-measured) LFP features for one run, or {} if unavailable.
+
+    Imported lazily and cached: the extractor needs the project modules
+    (param_render for connectivity reconstruction, wc_config, wc_figures), which
+    the toolkit itself does not depend on. Missing arrays.npz is NOT an error --
+    sweeps predating the extractor fall back to the pixel measure.
+    """
+    from pathlib import Path as _P
+    if not (_P(run_dir) / "arrays.npz").exists():
+        return {}
+    if _ANALYTIC["ok"] is None:
+        try:
+            # _load_toolkit already put --toolkit on sys.path, so the toolkit
+            # module is importable flat. The PROJECT modules it needs live beside
+            # this script, which PYTHONSAFEPATH keeps off sys.path -- add it.
+            import sys as _sys
+            from pathlib import Path as _PP
+            _here = str(_PP(__file__).resolve().parent)
+            if _here not in _sys.path:
+                _sys.path.insert(0, _here)
+            import analytic_features as AF
+            import param_render as PR
+            import wc_config as _cfg
+            import wc_figures as _WF
+            _ANALYTIC.update(mod=AF, recon=PR._reconstruct_connectivity,
+                             cfg=_cfg, figs=_WF, ok=True)
+        except Exception as e:
+            print(f"  [analytic features unavailable: {e}]")
+            _ANALYTIC["ok"] = False
+    if not _ANALYTIC["ok"]:
+        return {}
+    return _ANALYTIC["mod"].extract(
+        run_dir, _ANALYTIC["recon"], _ANALYTIC["cfg"], _ANALYTIC["figs"])
+
+
 def classify_run(run_dir, cname, seed, F, C):
     """Extract + classify one run. Returns a full master row dict, or None if
     the figure pair is missing."""
@@ -110,10 +178,29 @@ def classify_run(run_dir, cname, seed, F, C):
     if not (hm.exists() and lfp.exists()):
         return None
     feats = F.extract_features(str(hm), str(lfp), mean_E=None, val_acc=None)
+    # Analytic LFP features, measured from arrays.npz rather than the rendered
+    # PNG. These OVERLAY the pixel features: the pixel keys stay in the row (so
+    # the two measures can be compared on the sheet) but the classifier reads
+    # whichever key classifier.SPIKE_AMP_FEATURE names. A run without arrays.npz
+    # (older sweeps) simply keeps the pixel measure.
+    feats.update(_analytic_feats(run_dir))
     verdict = C.classify(feats)
     row = _read_identity(run_dir, cname, seed)
     for k in FEAT_COLS:
-        row[k] = feats.get(k, "")
+        v = feats.get(k, "")
+        # Some features are per-channel-count ARRAYS (e.g. involve_contig_dur_s
+        # is indexed by "how many contiguous channels"). Writing the whole list
+        # into a CSV cell makes the sheet unreadable and unsortable, so export
+        # the value at the threshold the rules actually decide on, and name the
+        # column accordingly. The full array stays available in the feature dict.
+        if isinstance(v, (list, tuple)):
+            k_at = ARRAY_FEAT_AT.get(k)
+            if k_at is None or not v:
+                continue
+            row[f"{k}_at{k_at}"] = (round(float(v[k_at - 1]), 4)
+                                    if 1 <= k_at <= len(v) else "")
+            continue
+        row[k] = v
     row["label"] = verdict["label"]
     row["label_name"] = verdict["label_name"]
     row["confidence"] = verdict["confidence"]

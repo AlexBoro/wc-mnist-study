@@ -47,9 +47,18 @@ STORE_KEY = "wcmnist_paramexplore_adjudication_v1"
 
 # metrics surfaced on each card (label -> pretty)
 METRIC_KEYS = [
+    # The Type 0/1 deciding quantities come FIRST: amp_prom is the amplitude the
+    # rule tests against SPIKE_AMP_MIN (1.0 = "crosses the baseline of the channel
+    # above"), amp_exc is the same transient as absolute excursion, width_ms its
+    # sharpness, amp_px the superseded pixel measure kept for comparison.
+    # Adjudicating a 0-vs-1 card without these visible means guessing at what the
+    # classifier decided on.
+    ("amp_prominence", "amp_prom"), ("amp_excursion", "amp_exc"),
+    ("width_ms", "width_ms"), ("spike_amp_max", "amp_px"),
+    ("n_fpfa_sequences", "fpfa_seq"), ("fast_dur_s", "fast_s"),
     ("ink_frac", "ink"), ("max_col_frac", "max_col"), ("band_score", "band"),
     ("n_complexes", "cplx"), ("cross_cols", "cross"),
-    ("n_active_channels", "chans"), ("fast_activity_duration_s", "fast_s"),
+    ("n_active_channels", "chans"),
     ("sync_spike_extent", "sync"), ("vertical_spread_fraction", "vspread"),
 ]
 
