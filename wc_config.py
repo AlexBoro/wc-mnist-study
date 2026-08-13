@@ -232,11 +232,33 @@ W_LFP_INH = 25.0
 # pixel-deflection threshold transfer across runs and keeps flat epochs readable.
 #
 # 150.0 was calibrated 2026-07-25 against the OLD E->E coefficients (0.15/0.05).
-# The rework changes signal amplitude, so this value is PROVISIONAL: the pilot
-# reports measured peak deflections (save_lfp(..., return_stats=True)) and this
-# is then set so pixels-per-signal-unit matches the old figures. Leaving it at
-# 150 while the drive changes would silently rescale every figure.
-LFP_SPAN = 150.0
+# The rework changed signal amplitude, so 150 was PROVISIONAL and is now
+# superseded.
+#
+# RECALIBRATED 2026-08-14 from the 20-seed x 3-config pilot (60 runs, all
+# measured -- see the volume-visibility note below). Measured peak |deflection|
+# of the filtered, un-offset traces:
+#     min 2.15   median 10.97   p90 28.52   p99 34.05   max 34.48
+# The distribution is BIMODAL, not tailed: 27 quiet runs at 2.2-6.1 and 33 active
+# runs at 10.2-34.5, with the gap doing the separating. So the span is set from
+# the active mode's ceiling, not from a Gaussian tail extrapolation (which
+# projected a spurious 243 off the pooled sd).
+#
+# Required span = ladder (27*5.0 = 135) + 2 * peak, since the traces excurse both
+# ways around the ladder. Max required = 135 + 2*34.48 = 204.0, and 55% of pilot
+# runs exceeded 150 -- i.e. the old value clipped the majority of runs.
+#
+# 240 gives 52.5 per side: 1.52x the largest peak observed in 60 runs. The margin
+# is deliberate because the full sweep is 25x larger and will sample further out
+# than the pilot did, and because clipping is not a cosmetic defect here: 12 of
+# the classifier's 13 inputs are PIXEL-derived from lfp.png (only amp_prominence
+# is analytic), and the channel-extent rules -- sync_spike_extent,
+# involve_contig_dur_s, vertical_spread_fraction, burst_band_frac -- count
+# exactly the top/bottom electrodes that clipping truncates. A clipped figure
+# therefore mislabels runs, it does not merely look worse.
+#
+# Changing this is a RE-RENDER, not a re-simulate: arrays.npz is untouched.
+LFP_SPAN = 240.0
 
 # =============================================================================
 # Dataset split (cell 11 / §4): deterministic 50k/10k, split RNG seed 123
