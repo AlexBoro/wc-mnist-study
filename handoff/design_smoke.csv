@@ -1,0 +1,4 @@
+config,seed,bias_e,bias_i,depth
+simultaneous,0,-7.6143,-9.4477,8.3883
+sequential_noH,0,-7.6143,-9.4477,8.9923
+sequential_H,0,-7.6143,-9.4477,10.0376

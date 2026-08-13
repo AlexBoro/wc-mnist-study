@@ -20,3 +20,9 @@ dual_lfp_compare.png
 # OS / editor cruft
 .DS_Store
 Thumbs.db
+
+# Probe run logs (outputs, not code)
+*.log
+
+# Editor backups
+*.bak

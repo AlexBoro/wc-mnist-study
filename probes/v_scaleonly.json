@@ -1,0 +1,98 @@
+[
+ {
+  "variant": "june_scaleonly",
+  "seed": 0,
+  "config": "sequential_noH",
+  "mean_E": 0.002053865697234869,
+  "max_E": 0.5796306133270264,
+  "frac_hi": 1.0459183673469388e-05
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 0,
+  "config": "simultaneous",
+  "mean_E": 0.046331170946359634,
+  "max_E": 0.9999998807907104,
+  "frac_hi": 0.04300816326530612
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 1,
+  "config": "sequential_noH",
+  "mean_E": 0.0017096620285883546,
+  "max_E": 0.5808168053627014,
+  "frac_hi": 1.3010204081632653e-05
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 1,
+  "config": "simultaneous",
+  "mean_E": 0.035310495644807816,
+  "max_E": 0.9999998211860657,
+  "frac_hi": 0.028972448979591836
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 2,
+  "config": "sequential_noH",
+  "mean_E": 0.00216732919216156,
+  "max_E": 0.5527827739715576,
+  "frac_hi": 1.3775510204081633e-05
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 2,
+  "config": "simultaneous",
+  "mean_E": 0.04109980911016464,
+  "max_E": 0.9999998211860657,
+  "frac_hi": 0.03429362244897959
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 3,
+  "config": "sequential_noH",
+  "mean_E": 0.0016627671429887414,
+  "max_E": 0.5898676514625549,
+  "frac_hi": 1.7346938775510206e-05
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 3,
+  "config": "simultaneous",
+  "mean_E": 0.04747956618666649,
+  "max_E": 0.9999997615814209,
+  "frac_hi": 0.050361224489795915
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 4,
+  "config": "sequential_noH",
+  "mean_E": 0.005930066574364901,
+  "max_E": 0.5826692581176758,
+  "frac_hi": 2.857142857142857e-05
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 4,
+  "config": "simultaneous",
+  "mean_E": 0.09045077860355377,
+  "max_E": 0.9999998807907104,
+  "frac_hi": 0.08816377551020409
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 5,
+  "config": "sequential_noH",
+  "mean_E": 0.0014853967586532235,
+  "max_E": 0.5729248523712158,
+  "frac_hi": 9.183673469387756e-06
+ },
+ {
+  "variant": "june_scaleonly",
+  "seed": 5,
+  "config": "simultaneous",
+  "mean_E": 0.037771545350551605,
+  "max_E": 0.9999997615814209,
+  "frac_hi": 0.03901964285714286
+ }
+]

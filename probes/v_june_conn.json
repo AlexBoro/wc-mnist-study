@@ -1,0 +1,98 @@
+[
+ {
+  "variant": "june_conn",
+  "seed": 0,
+  "config": "sequential_noH",
+  "mean_E": 0.00197366951033473,
+  "max_E": 0.5850278735160828,
+  "frac_hi": 3.239795918367347e-05
+ },
+ {
+  "variant": "june_conn",
+  "seed": 0,
+  "config": "simultaneous",
+  "mean_E": 0.04549582675099373,
+  "max_E": 0.9999998211860657,
+  "frac_hi": 0.042075
+ },
+ {
+  "variant": "june_conn",
+  "seed": 1,
+  "config": "sequential_noH",
+  "mean_E": 0.001510321395471692,
+  "max_E": 0.5828899145126343,
+  "frac_hi": 1.556122448979592e-05
+ },
+ {
+  "variant": "june_conn",
+  "seed": 1,
+  "config": "simultaneous",
+  "mean_E": 0.031664758920669556,
+  "max_E": 0.9999998807907104,
+  "frac_hi": 0.025623979591836734
+ },
+ {
+  "variant": "june_conn",
+  "seed": 2,
+  "config": "sequential_noH",
+  "mean_E": 0.0022513552103191614,
+  "max_E": 0.6858124732971191,
+  "frac_hi": 2.0918367346938775e-05
+ },
+ {
+  "variant": "june_conn",
+  "seed": 2,
+  "config": "simultaneous",
+  "mean_E": 0.039785388857126236,
+  "max_E": 0.9999997019767761,
+  "frac_hi": 0.03093341836734694
+ },
+ {
+  "variant": "june_conn",
+  "seed": 3,
+  "config": "sequential_noH",
+  "mean_E": 0.0016476876335218549,
+  "max_E": 0.5408014059066772,
+  "frac_hi": 9.438775510204082e-06
+ },
+ {
+  "variant": "june_conn",
+  "seed": 3,
+  "config": "simultaneous",
+  "mean_E": 0.05149060860276222,
+  "max_E": 0.9999998211860657,
+  "frac_hi": 0.055367091836734696
+ },
+ {
+  "variant": "june_conn",
+  "seed": 4,
+  "config": "sequential_noH",
+  "mean_E": 0.006214677821844816,
+  "max_E": 0.8994045853614807,
+  "frac_hi": 0.0001806122448979592
+ },
+ {
+  "variant": "june_conn",
+  "seed": 4,
+  "config": "simultaneous",
+  "mean_E": 0.6771960258483887,
+  "max_E": 0.9999998807907104,
+  "frac_hi": 0.8143295918367347
+ },
+ {
+  "variant": "june_conn",
+  "seed": 5,
+  "config": "sequential_noH",
+  "mean_E": 0.0014572071377187967,
+  "max_E": 0.5541366934776306,
+  "frac_hi": 3.5714285714285714e-06
+ },
+ {
+  "variant": "june_conn",
+  "seed": 5,
+  "config": "simultaneous",
+  "mean_E": 0.03732689097523689,
+  "max_E": 0.9999996423721313,
+  "frac_hi": 0.038380867346938775
+ }
+]
