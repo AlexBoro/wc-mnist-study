@@ -252,6 +252,13 @@ def save_heatmap(activity: np.ndarray, times: np.ndarray, path: str, title: str,
     return path
 
 
+# Inter-channel spacing of the stacked LFP traces, in FILTERED SIGNAL UNITS.
+# The taxonomy's amplitude criterion ("the transient crosses the baseline of
+# the channel above") is expressed in units of this spacing, so any measurement
+# of that criterion -- pixel-based or analytic -- must divide by THIS number.
+LFP_STACK_OFFSET = 5.0
+
+
 def save_lfp(E_window: np.ndarray, times: np.ndarray, path: str, dt: float,
              I_window: np.ndarray | None = None, CeLoc=None, CeRem=None,
              image_duration: float | None = None, pulsed: bool = False,
@@ -317,7 +324,7 @@ def save_lfp(E_window: np.ndarray, times: np.ndarray, path: str, dt: float,
     sample_rate = 1.0 / dt_eff if dt_eff > 0 else 1.0
     filt = filter_eeg(LFP, cutoff_hz, sample_rate, high_or_low="high", order=4)
 
-    offsets = np.arange(E_count) * 5.0
+    offsets = np.arange(E_count) * LFP_STACK_OFFSET
     stacked = filt + offsets[None, :]
     for ch in range(E_count):
         ax.plot(times, stacked[:, ch], lw=0.7)

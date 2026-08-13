@@ -15,6 +15,7 @@ ranges are unchanged — only the RNG plumbing differs.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from typing import Optional
 
 # =============================================================================
 # Network size (notebook cell 12)
@@ -53,8 +54,67 @@ TAUINH_MIN, TAUINH_MAX = 0.01, 0.08
 TAUOUT_MIN, TAUOUT_MAX = 1.0 / 25 * 1.0, 1.0 / 25 * 1.0   # degenerate -> constant 1/25
 
 # Slow adaptation variable H (cell 7, v57/v63)
-TAU_H_MIN, TAU_H_MAX = 0.5, 3.0
+#
+# 2026-08-12: WIDENED from (0.5, 3.0) to (0.01, 10.0) to match the 6/28/26
+# reference exploration.  Measured in WC_MNIST_parameter_explore_FINAL.xlsx
+# (sequential_H, n=500): tau_H spans 0.0193-9.9547, with 42% of runs above 3.0
+# and a floor two orders of magnitude below 0.5.  The old (0.5, 3.0) cap made
+# adaptation uniformly SLOW relative to event timescales, so H integrated over
+# a whole event and terminated it regardless of how hard the biases drove --
+# which is the suspected reason alpha_H displaced bias position as the variable
+# controlling seizure here (rho(alpha_H,sz) = -0.73 vs -0.13 in the reference,
+# while rho(depth-past-boundary, sz) = +0.02 here vs +0.44 in the reference).
+#
+# NOTE on the reference distribution: it is a MIXTURE, not a clean uniform.
+# 160/500 reference runs sit at exactly tau_H = 1.0; the other 340 are ~uniform
+# on (0.019, 9.955).
+#
+# CORRECTED 2026-08-12.  An earlier version of this note attributed the 1.0
+# spike to "the resolve_alpha_tau OFF-path default leaking into H-on runs".
+# That is WRONG.  The H-off configs carry 0/500 rows at tau_H == 1.0 (they
+# sample tau_H normally and simply never use it), and all 160 pinned rows have
+# alpha_H >= 1.0, i.e. adaptation genuinely on.  The real cause is a CODE
+# VERSION boundary: the pinned rows are log rows 0-159, one contiguous block,
+# and their word_doc filenames identify them as v57 (Jan 15), which held tau_H
+# fixed at 1.0; rows 160-499 are v63 (Jan 16+), which sampled it.  The
+# "mixture" is two code versions concatenated into one spreadsheet.
+#
+# CONSEQUENCE for comparisons: this repo ports v63's declarations, so v63 is
+# the reference target and tau_H is CONFOUNDED WITH VERSION (rho = 0.65).  The
+# subgroup contrast that earlier appeared here as evidence for a tau_H effect
+# (0.978 sampled vs 0.810 pinned, Fisher p = 0.032) does NOT survive adding a
+# version indicator, which flips the tau_H coefficient negative (LR chi2 =
+# 5.73, p = 0.017).  Within v63 alone, rho(tau_H, seizure) = -0.030 (p = 0.85),
+# because 43/44 in-band v63 runs seize -- the reference is at ceiling in-band
+# and cannot resolve a tau_H effect at all.  Compare against v63 only, never
+# the pooled rate and never the "sampled tau_H" subgroup.
+#
+# The widening to (0.01, 10.0) is justified by OUR OWN 60-run experiment, which
+# is internally controlled: the alpha_H-matched paired arm flipped 8 seeds to
+# seizure and 0 back (McNemar p = 0.008) and restored rho(depth, seizure) from
+# +0.015 to +0.250.  We sample uniformly and do NOT reproduce the 1.0 spike,
+# which is an artifact of superseded reference code.
+TAU_H_MIN, TAU_H_MAX = 0.01, 10.0
+# Initial STATE of the adaptation variable H (not its strength -- that is
+# ALPHA_H_ON_* below).  Explore path: H0 ~ U(H_INIT_MIN, H_INIT_MAX) per unit,
+# drawn from init_rng (param_explore.py, wc_experiment.py, timing_calibration.py).
+#
+# NO ASYMMETRY between probe and training.  A note here previously claimed the
+# TRAINING path started H at exactly 0; that was WRONG and is retracted.  The
+# `H = torch.zeros(N)` fallbacks inside wc_model.py's inner functions are
+# UNREACHABLE from either entry point: wc_experiment.run_experiment draws
+# H0 from the same init_rng over the same U(H_INIT_MIN, H_INIT_MAX) range and
+# threads it through, and both existing call sites pass it.  The 6/28/26
+# reference notebook randomizes H0 in its training driver the same way.
+#
+# The genuine probe/training difference is in the OTHER state variables (E0/I0,
+# see IC_E_MAX/IC_I_MAX below), which is faithful to the reference.
 H_INIT_MIN, H_INIT_MAX = 0.0, 0.01
+# Initial state of the free-running probe: E0 ~ U(0, IC_E_MAX), I0 ~ U(0, IC_I_MAX).
+# These are the 6/28/26 notebook's values (run_exploration_simulation, IC_E_MAX=IC_I_MAX=1.0).
+# The repo previously started the probe at E=I=0, which is a different basin for a
+# bistable network and suppressed seizures in the sequential configurations.
+IC_E_MAX, IC_I_MAX = 1.0, 1.0
 
 # H-current strength.  OFF configs use 0.0 (H-current is off iff alpha_H == 0.0).
 # The H-on config samples Uniform(ALPHA_H_ON_MIN, ALPHA_H_ON_MAX) (spec §2/§6,
@@ -69,6 +129,22 @@ INH2PY_GAIN_MIN, INH2PY_GAIN_MAX = 12.0, 37.0
 # Widened and EQUALIZED (see the drive note under W_CELOC below).  Equal means
 # for the two E->E populations are half of what makes drive flat in p_rewire;
 # equal coefficients are the other half.
+#
+# 2026-08-10: REVERTED to (-0.6, 3.0).  A 2026-08-01 edit had widened these
+# to (0.0, 5.0); that change is retracted because it moved TWO things at
+# once and the two are not separable after the fact:
+#   (a) drive:  per-unit E->E drive 18.72 -> 39.00, i.e. 2.13x the 6/28/26
+#       reference networks, when the goal was to MATCH them; and
+#   (b) ensemble: a 0.0 lower bound makes NO E->E edge negative, deleting
+#       the negative-weight fraction that is present in June (16.7% of
+#       CeLoc, 21.1% of CeRem) and in (-0.6, 3.0) (16.7%).
+# (-0.6, 3.0) is the drive-MATCHED range: half as many E->E edges as June
+# (156 vs 312, one split ring vs two full WS graphs), each ~2x stronger.
+#   June   156*0.15*mean U(-0.3,1.5) + 156*0.05*mean U(-0.4,1.5) = 18.33
+#   here   156*0.10*mean U(-0.6,3.0)                             = 18.72
+# KNOWN RESIDUAL: matching the mean does not match the variance.  Fewer,
+# stronger edges give a wider per-unit drive spread: CV 0.069 here vs
+# 0.056 in June (sd ratio 1.26).  Recorded, not corrected.
 CELOC_INIT_SCALE_MIN,  CELOC_INIT_SCALE_MAX  = -0.6, 3.0
 CEREM_INIT_SCALE_MIN,  CEREM_INIT_SCALE_MAX  = -0.6, 3.0
 CELOCI_INIT_SCALE_MIN, CELOCI_INIT_SCALE_MAX = -0.7, 1.5
@@ -230,6 +306,27 @@ class ExperimentConfig:
     # reaches run_id, params.json and the manifest, which is what keeps three
     # arms at one seed from resolving to the same output directory.
     arm: str = ""
+
+    # ---- Targeted bias overrides (2026-08-10) ----
+    # When None (the default), bias_e_init / bias_i_init are DRAWN from
+    # init_rng exactly as before and nothing about a run changes.  When set,
+    # the draws still happen -- so the RNG stream position, and therefore the
+    # connectivity and every downstream weight, is bit-identical to the
+    # unoverridden run at the same seed -- but the drawn values are discarded
+    # and these are used instead.
+    #
+    # This is what lets a pilot place (bias_e, bias_i) on a DESIGNED grid
+    # relative to the 6/28/26 seizure boundary while `seed` reverts to what it
+    # should be: a pure connectivity replicate.  Selecting seeds on their
+    # drawn biases instead would confound the two, and would oversample the
+    # corner of the region (seeds landing in-region for all three configs have
+    # bias_e median -0.76 vs the June seizure-side median of -1.25).
+    #
+    # The realized values reach params.json via _collect_params, which reads
+    # model.bias_e / model.bias_i rather than the draw, so a run always records
+    # the biases it actually used.
+    bias_e_override: Optional[float] = None
+    bias_i_override: Optional[float] = None
 
     # ---- Fixed hyperparameters (§4) ----
     num_epochs: int = NUM_EPOCHS

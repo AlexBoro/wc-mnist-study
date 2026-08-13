@@ -180,6 +180,33 @@ DEFAULT_INIT_RANGES = dict(
 # =============================================================================
 # Model (notebook cell 14) — DYNAMICS FROZEN
 # =============================================================================
+def active_row_at(step, dt, image_duration, row_duration=None, n_rows=28):
+    """Which image row is active at Euler `step`, on the canonical schedule.
+
+    row_duration/dt need not be a whole number of steps (for the standard
+    250 ms image and dt=2 ms it is 4.4643).  Quantising it to an integer step
+    count -- ``steps_per_row = int(row_duration/dt)`` -- loses 0.929 ms per row,
+    which accumulates to 26 ms over 28 rows: the scan then finishes the image at
+    step 112 of 125 and the ``min(..., n_rows-1)`` clamp parks the remaining 13
+    steps on the near-empty bottom row (34 ms there instead of 8 ms, and ~10%
+    less total drive per image).
+
+    Recomputing the row from continuous time instead never quantises
+    row_duration, so boundaries stay at true multiples of it and rows take 4 or
+    5 steps as needed, summing to exactly one image.  This is the schedule the
+    canonical notebook's ``run_exploration_simulation`` uses; its training path
+    used the quantised form, so the two disagreed.  Both paths call this now, so
+    a probe and a training run drive the network identically -- required for
+    comparing trained networks against a boundary fit from exploration runs.
+
+    `step` may be image-local or a global counter; the modulo handles both.
+    """
+    if row_duration is None:
+        row_duration = image_duration / n_rows
+    time_in_image = (step * dt) % image_duration
+    return min(int(time_in_image / row_duration), n_rows - 1)
+
+
 class SparseBigWilsonCowan(nn.Module):
     """Large Wilson-Cowan network with sparse connectivity and learnable parameters.
 
@@ -613,11 +640,8 @@ def train_one_image(model, mnist_image, label, optimizer, criterion,
         # Sequential row-by-row presentation
         if row_duration is None:
             row_duration = image_duration / 28
-        steps_per_row = max(1, int(row_duration / dt))
-
         for step in range(num_steps):
-            # Determine which row is currently active
-            current_row = min(step // steps_per_row, 27)
+            current_row = active_row_at(step, dt, image_duration, row_duration)
 
             # Compute input with only the active row
             I_ext = model.compute_mnist_input(
@@ -819,10 +843,9 @@ def evaluate(model, test_loader, criterion,
                         _row_duration = image_duration / 28
                     else:
                         _row_duration = row_duration
-                    steps_per_row = max(1, int(_row_duration / dt))
 
                     for step in range(num_steps):
-                        current_row = min(step // steps_per_row, 27)
+                        current_row = active_row_at(step, dt, image_duration, _row_duration)
                         I_ext = model.compute_mnist_input(
                             mnist_image * mnist_input_scale,
                             active_row=current_row
@@ -983,7 +1006,6 @@ def simulate_window_batched(model, images, dt, image_duration, output_average_wi
 
     if sequential_row_input:
         rd = row_duration if row_duration is not None else image_duration / 28
-        steps_per_row = max(1, int(rd / dt))
         I_ext_rows = torch.zeros(28, B, N, device=device)
         for r in range(28):
             rs = r * 28
@@ -1000,7 +1022,7 @@ def simulate_window_batched(model, images, dt, image_duration, output_average_wi
     H = torch.zeros(B, N, device=device)
     buf = []
     for step in range(num_steps):
-        Ix = I_ext_rows[min(step // steps_per_row, 27)] if sequential_row_input else I_ext_batch
+        Ix = I_ext_rows[active_row_at(step, dt, image_duration, rd)] if sequential_row_input else I_ext_batch
         E, I, O, H = forward_batched(model, E, I, O, H, Ix, dt)
         if step >= num_steps - buffer_steps:
             buf.append(O)

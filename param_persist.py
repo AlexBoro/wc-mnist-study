@@ -255,7 +255,8 @@ def append_log_row(out_root, result: PE.ExplorationResult, arm=""):
 def run_sweep(out_root, seeds, config_names=None, device=None,
               run_seconds=PE.RUN_SECONDS, record_stride=1, dtype_out=np.float16,
               code_tag="", repo_dir=None, render_fn=None, verbose=True,
-              arms=None, deep_check=True):
+              arms=None, deep_check=True, config_hook=None,
+              h_init_max=None, h_init_mode=None):
     """Resumable sweep over arms x configs x seeds.
 
     ``arms`` is a mapping ``{arm_name: coefficient}`` (e.g. cfg.PILOT_COEFF_ARMS)
@@ -267,6 +268,13 @@ def run_sweep(out_root, seeds, config_names=None, device=None,
     different model definition does NOT count as complete, so a mid-sweep code
     change causes those runs to be redone rather than silently inherited.  A
     disconnect costs at most the in-flight run.
+
+    ``config_hook(config, config_name, seed) -> config`` lets a caller vary the
+    config PER SEED -- used by the targeted-bias pilot, where each seed carries
+    its own designed (bias_e_override, bias_i_override).  The fingerprint is
+    recomputed after the hook, inside the seed loop, so resume still refuses to
+    inherit a bundle written at a different design point.  With no hook the
+    fingerprint is identical for every seed and behaviour is unchanged.
 
     ``deep_check=True`` verifies E_traj row count on skip candidates.  That opens
     arrays.npz, which over the Drive FUSE mount is a network round-trip per run;
@@ -291,8 +299,20 @@ def run_sweep(out_root, seeds, config_names=None, device=None,
                     config, w_celoc=float(coeff), w_cerem=float(coeff))
             # arm is metadata on the config so run_id/params.json carry it
             config = dataclasses.replace(config, arm=str(arm_name))
-            fp = PE.model_fingerprint(config)
+            base_config = config
             for seed in seeds:
+                config = (base_config if config_hook is None
+                          else config_hook(base_config, cname, seed))
+                fp = PE.model_fingerprint(config)
+                # H0 range is NOT part of the model definition, so it does not enter
+                # model_fingerprint -- but a bundle written at a different h_init_max
+                # is a different experiment and must not be inherited by resume.
+                if h_init_max is not None:
+                    fp = dict(fp)
+                    fp["hash"] = f"{fp['hash']}_h{float(h_init_max):g}"
+                if h_init_mode:
+                    fp = dict(fp)
+                    fp["hash"] = f"{fp['hash']}_m{h_init_mode}"
                 if is_complete(out_root, cname, seed,
                                expected_T=(expected_T if deep_check else None),
                                arm=arm_name, expect_fingerprint=fp["hash"]):
@@ -309,6 +329,7 @@ def run_sweep(out_root, seeds, config_names=None, device=None,
                     result = PE.run_one_exploration(
                         seed, config, device=device, run_seconds=run_seconds,
                         record_stride=record_stride, dtype_out=dtype_out,
+                        h_init_max=h_init_max, h_init_mode=h_init_mode,
                         verbose=False)
                     save_bundle(out_root, result, code_tag=code_tag,
                                 repo_dir=repo_dir, arm=arm_name,

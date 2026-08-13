@@ -139,16 +139,26 @@ def model_fingerprint(config: cfg.ExperimentConfig) -> dict:
         dt=float(cfg.DT),
         mnist_input_scale=float(cfg.MNIST_INPUT_SCALE),
     )
+    # Designed biases are part of what a run MEANS: two runs at the same
+    # (seed, config) with different targeted biases are different runs, and a
+    # resume must not inherit one for the other.  Absent when not overridden,
+    # so every pre-existing bundle keeps its original hash.
+    for key in ("bias_e_override", "bias_i_override"):
+        val = getattr(config, key, None)
+        if val is not None:
+            fp[key] = float(val)
     blob = json.dumps(fp, sort_keys=True, separators=(",", ":"))
     fp["hash"] = hashlib.sha256(blob.encode()).hexdigest()[:12]
     return fp
 
 
-def _collect_params(model, seed, config, alpha_H, tau_H):
+def _collect_params(model, seed, config, alpha_H, tau_H, ic_e_max=None, ic_i_max=None):
     """Every sampled hyperparameter + per-unit array summary stats (§5)."""
     p = dict(
         seed=int(seed), config_name=config.name, input_mode=config.input_mode,
         alpha_h_mode=config.alpha_h_mode, alpha_H=float(alpha_H), tau_H=float(tau_H),
+        ic_e_max=(None if ic_e_max is None else float(ic_e_max)),
+        ic_i_max=(None if ic_i_max is None else float(ic_i_max)),
         bias_e=float(model.bias_e.detach().cpu()),
         bias_i=float(model.bias_i.detach().cpu()),
         bias_out=float(model.bias_out),
@@ -181,6 +191,9 @@ def _collect_params(model, seed, config, alpha_H, tau_H):
 def run_one_exploration(seed: int, config: cfg.ExperimentConfig, device=None,
                         run_seconds: float = RUN_SECONDS, data_root=None,
                         record_stride: int = 1, dtype_out=np.float32,
+                        ic_e_max: float = None, ic_i_max: float = None,
+                        h_init_max: float = None,
+                        h_init_mode: str = None,
                         verbose: bool = False) -> ExplorationResult:
     """Single 10s free-running simulation of a random network (§3).
 
@@ -201,10 +214,65 @@ def run_one_exploration(seed: int, config: cfg.ExperimentConfig, device=None,
     model = X.build_model(seed, config, device, init_rng, alpha_H, tau_H)
     model.eval()
 
-    # Initial state: E=I=O=0, H drawn from init_rng (matches the harness §4).
-    H0 = init_rng.uniform(cfg.H_INIT_MIN, cfg.H_INIT_MAX, size=model.N).astype(np.float32)
-    E = torch.zeros(model.N, device=device)
-    I = torch.zeros(model.N, device=device)
+    # Initial state.  H is drawn from init_rng (matches the harness §4).
+    #
+    # E0/I0: the 6/28/26 notebook's run_exploration_simulation draws
+    #     E0 = rand(N) * IC_E_MAX,  I0 = rand(N) * IC_I_MAX   (both 1.0)
+    # while this module previously started at E=I=0.  For a bistable network
+    # that is a DIFFERENT BASIN, not a transient: it suppressed seizures in the
+    # sequential configurations specifically (past-boundary rate 0.11 vs the
+    # notebook's 0.94) while barely affecting `simultaneous`, whose 784-unit
+    # drive supplies its own kick.  Defaults now follow the notebook.
+    #
+    # The draw uses a SEPARATE generator seeded from `seed`, deliberately NOT
+    # init_rng, so changing ic_e_max/ic_i_max cannot shift the init_rng stream
+    # position -- network parameters stay bit-identical to a run at any other
+    # IC, isolating the initial condition as the only difference.
+    ic_e_max = cfg.IC_E_MAX if ic_e_max is None else float(ic_e_max)
+    ic_i_max = cfg.IC_I_MAX if ic_i_max is None else float(ic_i_max)
+    # h_init_max override: probes H0's range WITHOUT moving the init_rng stream.
+    # uniform(lo, hi, size=N) consumes exactly N draws whatever the bounds are, so
+    # network parameters stay bit-identical to a run at any other h_init_max --
+    # same discipline as ic_e_max/ic_i_max above.  H0 is the STATE of the
+    # adaptation variable; alpha_H (its strength) is untouched.
+    h_init_max = cfg.H_INIT_MAX if h_init_max is None else float(h_init_max)
+    H0 = init_rng.uniform(cfg.H_INIT_MIN, h_init_max, size=model.N).astype(np.float32)
+    ic_rng = np.random.default_rng(np.random.SeedSequence([int(seed), 0xE0]))
+    E0 = (ic_rng.random(model.N) * ic_e_max).astype(np.float32)
+    I0 = (ic_rng.random(model.N) * ic_i_max).astype(np.float32)
+    # h_init_mode="match_e0": start every unit at its own adaptation fixed
+    # point.  The model integrates tau_H*dH/dt = -H + E, so H_i(0) = E_i(0)
+    # gives dH/dt = 0 per unit at t=0 -- no charging transient, no free
+    # parameter.
+    #
+    # DO NOT USE THIS FOR PRODUCTION RUNS.  Retained as a documented negative
+    # result.  Tested 2026-08-13 on 22 designed seeds (sequential_H): it does
+    # NOT preserve the epileptiform dynamics.  Late-window (final 2 s of the
+    # 5 s probe) population E is statistically indistinguishable from an
+    # INDEPENDENT H0 ~ U(0, 1) draw -- r(log) = 1.000 across seeds, median
+    # ratio 1.00, and the same two seeds (069, 075) survive under both.
+    # Seizure-class late E collapses 0.319 (control) -> 0.006.
+    #
+    # The hypothesis this mode was built to test -- that per-unit CORRELATION
+    # with E0 would give graded suppression that spares the seizure runs --
+    # is refuted.  What matters is the MEAN of H0 (~0.5 here, vs 0.005 for
+    # the U(0, 0.01) default); the correlation structure is irrelevant.
+    # See H0_matched_result.png / H0_matched_late.csv.  Use H_INIT_MAX = 0.15
+    # instead: it removes the charging transient and preserves seizure-class
+    # late activity (0.318 vs 0.319 control).
+    #
+    # The init_rng.uniform draw above is still executed and then discarded, so
+    # the stream position -- and hence all 11 weight tensors -- stays
+    # bit-identical to any other mode (verified by sha256 over
+    # named_parameters + named_buffers).
+    _hmode = "uniform" if h_init_mode is None else str(h_init_mode)
+    if _hmode == "match_e0":
+        H0 = E0.copy()
+    elif _hmode != "uniform":
+        raise ValueError(f"unknown h_init_mode {_hmode!r} "
+                         "(expected 'uniform' or 'match_e0')")
+    E = torch.tensor(E0, device=device)
+    I = torch.tensor(I0, device=device)
     O = torch.zeros(model.num_output, device=device)
     H = torch.tensor(H0, device=device)
 
@@ -216,7 +284,6 @@ def run_one_exploration(seed: int, config: cfg.ExperimentConfig, device=None,
 
     seq = config.sequential_row_input
     row_dur = config.row_duration if seq else None
-    steps_per_row = max(1, int(round((row_dur if row_dur else cfg.IMAGE_DURATION / 28) / dt)))
     scale = cfg.MNIST_INPUT_SCALE
 
     # pre-scale images once
@@ -238,7 +305,7 @@ def run_one_exploration(seed: int, config: cfg.ExperimentConfig, device=None,
             img_idx = min(step // steps_per_image, n_images - 1)
             mnist_image = scaled_images[img_idx]
             if seq:
-                current_row = min((step % steps_per_image) // steps_per_row, 27)
+                current_row = M.active_row_at(step, dt, cfg.IMAGE_DURATION, row_dur)
                 I_ext = model.compute_mnist_input(mnist_image, active_row=current_row)
             else:
                 I_ext = model.compute_mnist_input(mnist_image)
@@ -250,10 +317,17 @@ def run_one_exploration(seed: int, config: cfg.ExperimentConfig, device=None,
                 rec_ptr += 1
     runtime_s = time.time() - t0
 
-    params = _collect_params(model, seed, config, alpha_H, tau_H)
+    params = _collect_params(model, seed, config, alpha_H, tau_H, ic_e_max, ic_i_max)
+    params["h_init_max"] = float(h_init_max)
+    params["h_init_mode"] = _hmode
     params["runtime_s"] = runtime_s
     arm = str(getattr(config, "arm", "") or "")
     run_id = f"seed{seed:03d}__{config.name}" + (f"__{arm}" if arm else "")
+    # A targeted-bias run gets the designed biases in its id, so two design
+    # points at one seed cannot resolve to the same output directory.
+    if getattr(config, "bias_e_override", None) is not None or \
+       getattr(config, "bias_i_override", None) is not None:
+        run_id += f"__be{params['bias_e']:+.2f}_bi{params['bias_i']:+.2f}"
     if verbose:
         print(f"[{run_id}] alpha_H={alpha_H:.3f} tau_H={tau_H:.3f} "
               f"E[max]={E_traj.max():.3f} t={runtime_s:.1f}s", flush=True)

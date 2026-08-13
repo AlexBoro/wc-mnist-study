@@ -37,6 +37,7 @@ import torch
 
 import wc_config as cfg
 import wc_figures as figs
+import wc_model as M
 from wc_experiment import (seed_everything, make_rngs, resolve_alpha_tau,
                            build_model, build_data)
 
@@ -88,7 +89,6 @@ def _simulate_window(model, images, net_state, config, n_images):
     seq = config.sequential_row_input
     if seq:
         rd = config.row_duration if config.row_duration is not None else config.image_duration / 28
-        steps_per_row = max(1, int(rd / dt))
 
     E_buf, I_buf, t_buf = [], [], []
     for k in range(n_images):
@@ -97,7 +97,7 @@ def _simulate_window(model, images, net_state, config, n_images):
             I_ext = model.compute_mnist_input(img * scale)
         for step in range(num_steps):
             if seq:
-                cur = min(step // steps_per_row, 27)
+                cur = M.active_row_at(step, dt, config.image_duration, rd)
                 I_ext = model.compute_mnist_input(img * scale, active_row=cur)
             E, I, O, H = model.forward(E, I, O, I_ext, dt, H=H)
             E_buf.append(E.detach())

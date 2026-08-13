@@ -153,6 +153,19 @@ def build_model(seed: int, config: cfg.ExperimentConfig, device, init_rng, alpha
     bias_e_init = float(init_rng.uniform(cfg.BIAS_E_INIT_MIN, cfg.BIAS_E_INIT_MAX))
     bias_i_init = float(init_rng.uniform(cfg.BIAS_I_INIT_MIN, cfg.BIAS_I_INIT_MAX))
 
+    # Targeted-bias pilots override the DRAWN biases.  The draws above still
+    # happen and are then discarded, which is the whole point: init_rng is left
+    # at exactly the position it would have had, so connectivity rewiring and
+    # every model weight below are bit-identical to the unoverridden run at the
+    # same seed.  Only the two bias scalars differ.  (Same discipline as the
+    # w_celoc/w_cerem arms, which are consumed after every draw.)
+    bias_e_override = getattr(config, "bias_e_override", None)
+    bias_i_override = getattr(config, "bias_i_override", None)
+    if bias_e_override is not None:
+        bias_e_init = float(bias_e_override)
+    if bias_i_override is not None:
+        bias_i_init = float(bias_i_override)
+
     CeLoc, CeRem, CeLocI = M.build_connectivity(init_rng, p_rewire_pypy, p_rewire_pyinh, device)
 
     model = M.SparseBigWilsonCowan(
