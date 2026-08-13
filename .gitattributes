@@ -1,0 +1,30 @@
+# Normalize line endings across all clones and platforms.
+#
+# The index already stores every file as LF; without this file a Windows
+# working tree keeps CRLF copies and git reports ~20 untouched files as
+# permanently modified, which buries real diffs.  Committing the policy
+# here (rather than setting core.autocrlf per machine) makes it apply to
+# every clone.
+* text=auto
+
+# Source and text formats: LF in the working tree too, so exact-match
+# editing tools do not fail on a convention mismatch.
+*.py     text eol=lf
+*.md     text eol=lf
+*.csv    text eol=lf
+*.json   text eol=lf
+*.ipynb  text eol=lf
+*.txt    text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+
+# Binaries: never touch.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.pdf    binary
+*.npz    binary
+*.npy    binary
+*.pt     binary
+*.pth    binary
+*.xlsx   binary
