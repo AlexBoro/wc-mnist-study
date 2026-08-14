@@ -24,7 +24,15 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+# Make the sibling modules importable no matter how this script is invoked.
+# Python started with -P or PYTHONSAFEPATH=1 (the default in some managed
+# environments) does NOT put the script's own directory on sys.path, so a bare
+# `import wc_config` fails with ModuleNotFoundError even when run from the repo
+# root.  Prepending explicitly costs nothing and makes the entry point robust.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import wc_config as cfg
 from wc_experiment import measure_topology_for_run

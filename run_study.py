@@ -17,6 +17,12 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+# See run_topology_pass.py: with PYTHONSAFEPATH / -P the script's own directory
+# is not added to sys.path, so the sibling imports below need it explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import wc_config as cfg
 from wc_experiment import run_experiment
