@@ -293,18 +293,33 @@ TOPO_HESSIAN_NUM_SAMPLES = 100
 TOPO_LANCZOS_ITERATIONS = 50
 
 # =============================================================================
-# Seizure-boundary constants (§10, FINAL labels 28 Jun 2026)
-# Logistic regression (C=1e4) on (bias_e_mean, bias_i_mean); bI = m*bE + c.
-# Applied at analysis time only — simulations never depend on these.
+# Seizure-boundary constants
+# Logistic regression (C=1e4) on realized (bias_e, bias_i); bI = m*bE + c.
+# Applied at analysis time only — simulations never depend on these, so a
+# refit can always be applied post hoc to metrics.parquet (bias_e, bias_i,
+# grad_bias_e, grad_bias_i are all recorded per epoch).
+#
+# 2026-08-14 REFIT on the 1500-run v3 hand-scored corpus (500 seeds x 3
+# configs; param_explore_v3_classified.csv joined to all_runs_params.csv).
+# The previous values were the 28 Jun 2026 fit, which predates both the v3
+# corpus and hand-scoring.  Re-scoring every run changes seizure side for:
+#     sequential_H    29/500 (5.8%)   hand-score agreement 93.6% -> 96.6%
+#     simultaneous    12/500 (2.4%)                        96.4% -> 96.0%
+#     sequential_noH   1/500 (0.2%)                        99.0% -> 99.2%
+# 22 of the 29 H-on flips fall in the 6-10 stratum, whose intercept moves
+# most (-3.37 -> -6.82).  That is the configuration this study cares about,
+# which is why this was updated before the 100-epoch runs rather than
+# recomputed afterwards.  See boundary_refit_v3.csv / boundary_drift.png.
 # =============================================================================
-BOUNDARY_SIMULTANEOUS = (2.24, -0.78)            # (slope m, intercept c)
-BOUNDARY_SEQUENTIAL_NOH = (2.10, -2.45)
-BOUNDARY_SEQUENTIAL_H_AGGREGATE = (2.19, -2.81)
+BOUNDARY_FIT_PROVENANCE = "v3-handscored-1500run-2026-08-14"
+BOUNDARY_SIMULTANEOUS = (2.357697, 0.036471)     # (slope m, intercept c)
+BOUNDARY_SEQUENTIAL_NOH = (2.005077, -2.522236)
+BOUNDARY_SEQUENTIAL_H_AGGREGATE = (1.950845, -4.499028)
 # alpha_H-stratified boundaries for the H-on config: stratum -> (m, c)
 BOUNDARY_SEQUENTIAL_H_STRATA = {
-    "0-3": (2.29, -2.52),
-    "3-6": (2.10, -2.22),
-    "6-10": (2.06, -3.37),
+    "0-3": (1.880765, -3.176108),
+    "3-6": (2.146298, -3.221631),
+    "6-10": (1.408629, -6.818616),
 }
 
 
@@ -379,6 +394,36 @@ class ExperimentConfig:
     # the biases it actually used.
     bias_e_override: Optional[float] = None
     bias_i_override: Optional[float] = None
+
+    # ---- Epoch-0 initial condition (2026-08-14) ----
+    # E0 ~ U(0, ic_e_max), I0 ~ U(0, ic_i_max) per unit, drawn from a SEPARATE
+    # generator seeded SeedSequence([seed, 0xE0]) -- deliberately not init_rng,
+    # so changing the IC cannot shift the init_rng stream position and network
+    # parameters stay bit-identical to a run at any other IC.  Same discipline
+    # and same generator seeding as param_explore.run_exploration_simulation, so
+    # a training run and a probe at the same seed start from the SAME E0/I0.
+    #
+    # This closes the last probe/training asymmetry.  The training path formerly
+    # started at E=I=0; for a bistable network that is a different basin, not a
+    # transient (it dropped the probe's past-boundary rate in the sequential
+    # configurations to 0.11 vs the notebook's 0.94).  Because training state
+    # carries over across all 100 epochs, epoch 0's basin is the initial
+    # condition for the whole ~13,000 s trajectory, not a 1 s transient.
+    #
+    # O0 is zero in both paths (the output layer has no free-running dynamics
+    # before the first stimulus reaches it).
+    ic_e_max: float = IC_E_MAX
+    ic_i_max: float = IC_I_MAX
+
+    # ---- Activity-array capture (2026-08-14) ----
+    # Save the TRAIN_HEATMAP_WINDOW of E/I as arrays.npz alongside the PNG, on
+    # the same epochs the heatmap is rendered.  Without this the window goes
+    # straight to a figure and is discarded, so training epochs cannot be run
+    # through labeling_toolkit -- "the network approached the seizure boundary"
+    # stays a claim about a line in bias space and never becomes an observation
+    # of seizure-like activity.  Keys match param_persist.save_bundle
+    # (E_traj/I_traj/times/stim_onsets) so the same feature code reads both.
+    save_activity_arrays: bool = True
 
     # ---- Fixed hyperparameters (§4) ----
     num_epochs: int = NUM_EPOCHS

@@ -26,7 +26,7 @@ import json
 import pickle
 import random
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 import numpy as np
@@ -534,6 +534,45 @@ def _flush_metrics(rows: list[dict], run_dir: Path):
     return parquet_ok
 
 
+def epoch_reconstructor(epoch_dir):
+    """Return a ``reconstruct_connectivity``-compatible callable for a training
+    epoch bundle written by ``run_experiment``.
+
+    Pass to ``labeling_toolkit.analytic_features.extract(run_dir, recon, cfg, wc_figures)``
+    IN PLACE OF ``param_render._reconstruct_connectivity``:
+
+        import wc_experiment as X, param_render as PR, wc_config as cfg
+        import wc_figures as WF, labeling_toolkit.analytic_features as AF
+        d = Path(run_dir) / "arrays" / "epoch_0048"
+        feats = AF.extract(d, X.epoch_reconstructor(d), cfg, WF)
+
+    Why this exists: ``PR._reconstruct_connectivity`` rebuilds the model from the
+    seed, which yields the connectivity the run STARTED with.  That is right for an
+    exploration probe (it never trains) and wrong for a training epoch, where
+    CeLoc/CeRem are precisely what gradient descent has moved.  This reads the
+    trained CSR that was saved with the arrays instead, so the LFP proxy is
+    computed from the same weights the dynamics were generated with.
+
+    Signature matches the toolkit's expectation ``(seed, config_name, arm="",
+    w_celoc=None, w_cerem=None)``; the arguments are accepted and ignored, since
+    the answer is stored rather than derived.  The saved ``w_celoc``/``w_cerem``
+    are returned, so an arm's coefficient override is honoured automatically.
+    """
+    import scipy.sparse as sp
+    z = np.load(Path(epoch_dir) / "arrays.npz")
+
+    def _recon(seed, config_name, arm="", w_celoc=None, w_cerem=None):
+        CeLoc = sp.csr_matrix((z["CeLoc_data"], z["CeLoc_indices"], z["CeLoc_indptr"]),
+                              shape=tuple(int(v) for v in z["CeLoc_shape"]))
+        CeRem = sp.csr_matrix((z["CeRem_data"], z["CeRem_indices"], z["CeRem_indptr"]),
+                              shape=tuple(int(v) for v in z["CeRem_shape"]))
+        wL = float(z["w_celoc"]) if w_celoc is None else float(w_celoc)
+        wR = float(z["w_cerem"]) if w_cerem is None else float(w_cerem)
+        return CeLoc, CeRem, wL, wR
+
+    return _recon
+
+
 def _append_manifest(run_dir: Path, manifest_rows: list[dict]):
     path = run_dir / "figure_manifest.csv"
     df = pd.DataFrame(manifest_rows, columns=FIGURE_MANIFEST_COLUMNS)
@@ -567,11 +606,26 @@ def run_experiment(seed: int, config: cfg.ExperimentConfig,
                                  lr=config.learning_rate)
     criterion = nn.CrossEntropyLoss()
 
-    # Initial network state (H drawn from init_rng for reproducibility; §4 carry-over)
+    # Initial network state.  Set ONCE here, before the epoch loop -- this is the
+    # state entering the first image of epoch 0, and from there the trajectory is
+    # unbroken for all num_epochs (§4 carry-over).  It is NOT a per-epoch reset.
+    #
+    # H0 from init_rng (as before).  E0/I0 now match param_explore exactly:
+    # U(0, ic_e_max) / U(0, ic_i_max) from a separate generator seeded
+    # SeedSequence([seed, 0xE0]), so (a) a training run and a probe at the same
+    # seed start from the SAME E0/I0, and (b) changing the IC cannot shift the
+    # init_rng stream position, leaving network parameters bit-identical to a run
+    # at any other IC.  The former E=I=0 start was a different basin for a
+    # bistable network, and because state carries over it conditioned the whole
+    # ~13,000 s trajectory rather than a 1 s transient.  O0 stays zero, as in the
+    # probe.
     H0 = init_rng.uniform(cfg.H_INIT_MIN, cfg.H_INIT_MAX, size=model.N).astype(np.float32)
+    ic_rng = np.random.default_rng(np.random.SeedSequence([int(seed), 0xE0]))
+    E0 = (ic_rng.random(model.N) * config.ic_e_max).astype(np.float32)
+    I0 = (ic_rng.random(model.N) * config.ic_i_max).astype(np.float32)
     state = {
-        "E": torch.zeros(model.N, device=device),
-        "I": torch.zeros(model.N, device=device),
+        "E": torch.tensor(E0, device=device),
+        "I": torch.tensor(I0, device=device),
         "O": torch.zeros(model.num_output, device=device),
         "H": torch.tensor(H0, device=device),
         "global_train_time_s": 0.0,
@@ -586,6 +640,33 @@ def run_experiment(seed: int, config: cfg.ExperimentConfig,
     run_dir.mkdir(parents=True, exist_ok=True)
 
     boundary = cfg.get_boundary(config.name, alpha_H)
+
+    # Run provenance (2026-08-14).  The exploration path has always written this
+    # via param_persist.save_bundle; the training path wrote no commit, no
+    # environment and no config snapshot, which for a 25 h run is a real
+    # reproducibility gap.  Written at run START (not at DONE) so it exists even
+    # for a run that is killed mid-flight, and re-written on resume.  Reuses
+    # param_persist's helpers rather than reimplementing them, so the two paths
+    # cannot drift.
+    try:
+        import param_persist as _pp
+        (run_dir / "run_params.json").write_text(json.dumps(dict(
+            run_id=run_id, seed=seed, config_name=config.name,
+            alpha_H=float(alpha_H), tau_H=float(tau_H),
+            device=str(device), deterministic_ok=bool(deterministic_ok),
+            git_commit=_pp._git_commit(), env=_pp._env_provenance(),
+            derived_config=_pp.derived_config(cfg),
+            config=asdict(config),
+            boundary=dict(slope=float(boundary[0]), intercept=float(boundary[1]),
+                          provenance=getattr(cfg, "BOUNDARY_FIT_PROVENANCE", "")),
+            initial_condition=dict(
+                ic_e_max=float(config.ic_e_max), ic_i_max=float(config.ic_i_max),
+                h_init_min=float(cfg.H_INIT_MIN), h_init_max=float(cfg.H_INIT_MAX),
+                ic_rng_seed_sequence=[int(seed), 0xE0], o_init="zeros"),
+            eval_branched=True,
+        ), indent=2, default=str))
+    except Exception as e:
+        print(f"  [warn] run_params.json not written: {e}")
 
     rows: list[dict] = []
     manifest_rows: list[dict] = []
@@ -678,8 +759,16 @@ def run_experiment(seed: int, config: cfg.ExperimentConfig,
         # Clean-gradient probe at current params
         grad = clean_gradient_probe(model, criterion, fixed_eval_batch, config, boundary)
 
-        # Validation on the fixed eval subset, carry-over state (§4)
-        val_loss, val_acc, _, _, _, state["E"], state["I"], state["O"], state["H"], _ = M.evaluate(
+        # Validation on the fixed eval subset, BRANCHED off the carried trajectory
+        # (2026-08-14).  Eval starts from the live post-training state, so it
+        # measures the network as training left it -- but its end state is
+        # DISCARDED, so its 256 held-out images (64 s of simulated time, as much as
+        # the epoch's training) do not condition what epoch N+1 trains from.  The
+        # training trajectory is therefore continuous train-to-train, which is what
+        # §4 carry-over means.  This also reconciles the state with
+        # global_train_time_s, which only ever advanced during training: the saved
+        # activity time axis and the actual dynamics now agree.
+        val_loss, val_acc, _, _, _, _, _, _, _, _ = M.evaluate(
             model, fixed_eval_loader, criterion,
             dt=config.dt, image_duration=config.image_duration,
             output_average_window=config.output_average_window,
@@ -744,6 +833,71 @@ def run_experiment(seed: int, config: cfg.ExperimentConfig,
         elif measure and not measure_topology_flag:
             # Trigger fired but measurement disabled (e.g. local smoke run)
             trigger_state["last_topo_epoch"] = epoch
+
+        # Activity arrays on captured epochs (2026-08-14).  Written BEFORE the
+        # figures so a render failure cannot cost the arrays -- they are the
+        # scientific record, the PNGs are only a view of them.
+        #
+        # Written as a BUNDLE-SHAPED directory (arrays.npz + manifest.json) so
+        # labeling_toolkit.analytic_features.extract() reads a training epoch with
+        # exactly the code it uses on an exploration probe: same array keys, same
+        # dtypes, and the window length (TRAIN_HEATMAP_WINDOW) already equals the
+        # probe's RUN_SECONDS while _train_one_epoch records every step, so the
+        # sampling matches too.
+        #
+        # The TRAINED connectivity is saved alongside.  This is load-bearing:
+        # param_render._reconstruct_connectivity rebuilds connectivity from the
+        # SEED, which gives the INITIAL weights -- correct for a probe (which never
+        # trains) but wrong for epoch N of a training run, where CeLoc/CeRem are
+        # exactly what learning has changed.  Scoring a trained epoch's LFP against
+        # its initial connectivity would silently mis-measure the thing the study
+        # is about.  Use wc_experiment.epoch_reconstructor(epoch_dir) as the
+        # `reconstruct_connectivity` argument to extract().
+        if config.save_activity_arrays and will_capture and E_window.size:
+            ep_dir = run_dir / "arrays" / f"epoch_{epoch:04d}"
+            ep_dir.mkdir(parents=True, exist_ok=True)
+            # Stimulus onsets on the same absolute axis as t_window: images are
+            # presented back-to-back with no gap, so an onset is a sample where t
+            # crosses a multiple of image_duration.  Note the leading False: the
+            # window's first sample is NOT an onset unless it happens to land on a
+            # boundary -- prepending True instead would inject a phantom event at
+            # t[0] in every bundle (and one off by up to a full image_duration for a
+            # window that starts mid-image).
+            _k = np.floor(t_window / config.image_duration + 1e-9)
+            _onsets = t_window[np.concatenate(([False], np.diff(_k) > 0))]
+            try:
+                np.savez_compressed(
+                    ep_dir / "arrays.npz",
+                    E_traj=E_window.astype(np.float32),
+                    I_traj=I_window.astype(np.float32),
+                    times=t_window.astype(np.float64),
+                    stim_onsets=_onsets.astype(np.float64),
+                    # trained, scaled connectivity as CSR triplets + LFP weights
+                    CeLoc_data=model.CeLoc_values.detach().cpu().numpy(),
+                    CeLoc_indices=model.CeLoc_col_indices.detach().cpu().numpy(),
+                    CeLoc_indptr=model.CeLoc_crow_indices.detach().cpu().numpy(),
+                    CeLoc_shape=np.asarray(tuple(model.CeLoc_shape), dtype=np.int64),
+                    CeRem_data=model.CeRem_values.detach().cpu().numpy(),
+                    CeRem_indices=model.CeRem_col_indices.detach().cpu().numpy(),
+                    CeRem_indptr=model.CeRem_crow_indices.detach().cpu().numpy(),
+                    CeRem_shape=np.asarray(tuple(model.CeRem_shape), dtype=np.int64),
+                    w_celoc=np.float64(model.w_celoc),
+                    w_cerem=np.float64(model.w_cerem),
+                )
+                # manifest.json LAST -- extract() reads it, so its presence is the
+                # completeness marker for the bundle (same discipline as
+                # param_persist.save_bundle).
+                (ep_dir / "manifest.json").write_text(json.dumps(dict(
+                    run_id=run_id, seed=seed, config_name=config.name,
+                    arm=config.arm, epoch=epoch,
+                    alpha_H=float(alpha_H), tau_H=float(tau_H),
+                    connectivity="trained", trained_connectivity_in_npz=True,
+                ), indent=2))
+                manifest_rows.append(dict(
+                    run_id=run_id, seed=seed, config_name=config.name,
+                    epoch=epoch, fig_type="arrays_bundle", path=str(ep_dir)))
+            except Exception as e:
+                print(f"  [warn] activity-array save failed at epoch {epoch}: {e}")
 
         # Figures on captured (epoch 0 + scheduled) epochs (§12)
         if will_capture and E_window.size:

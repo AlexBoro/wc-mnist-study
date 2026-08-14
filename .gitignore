@@ -27,3 +27,7 @@ Thumbs.db
 # Editor backups
 *.bak
 safeside/
+
+# Benchmark / smoke-test scratch (regenerate from bench/*.py)
+bench/smoke_out/
+bench/*_out/
