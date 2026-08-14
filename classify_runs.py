@@ -58,6 +58,16 @@ FEAT_COLS = [
     "n_chans_prominence_ge1", "n_chans_excursion_ge1", "n_sharp_transients",
 ]
 VERDICT_COLS = ["label", "label_name", "confidence", "rule", "clause", "review"]
+# Render/measurement provenance, recorded per row.
+#
+# `*_render` is what the bundle's manifest says was in force when lfp.png was
+# DRAWN; `*_measure` is what this process used when the ANALYTIC features were
+# measured from arrays.npz. They are separate columns because they are separate
+# events -- a config edit between the sweep and a re-classification makes one
+# feature row half-measured under each window, and a single column could not
+# show that. `derived_verdict` is the comparison (see _derived_verdict).
+DERIVED_COLS = ["lfp_span_render", "lead_in_s_render",
+                "lead_in_s_measure", "derived_verdict"]
 # Array-valued features: which channel-count index to export, and it must match
 # the threshold the RULES test at, or the sheet would show a number the verdict
 # was not based on. Sourced from the classifier so the two cannot drift.
@@ -66,7 +76,7 @@ ARRAY_FEAT_AT = {
     "fast_contig_dur_s": None,
 }
 
-ALL_COLS = ID_COLS + FEAT_COLS + VERDICT_COLS
+ALL_COLS = ID_COLS + FEAT_COLS + VERDICT_COLS + DERIVED_COLS
 ALL_COLS = [c for c in ALL_COLS if c not in ARRAY_FEAT_AT] + [
     f"{k}_at{v}" for k, v in ARRAY_FEAT_AT.items() if v]
 
@@ -85,7 +95,7 @@ def _load_toolkit(toolkit_dir):
     ARRAY_FEAT_AT["involve_contig_dur_s"] = TH.get("SEIZ_CONTIG_CHANS")
     ARRAY_FEAT_AT["fast_contig_dur_s"] = TH.get("SEIZ_CONTIG_CHANS")
     global ALL_COLS
-    ALL_COLS = [c for c in ID_COLS + FEAT_COLS + VERDICT_COLS
+    ALL_COLS = [c for c in ID_COLS + FEAT_COLS + VERDICT_COLS + DERIVED_COLS
                 if c not in ARRAY_FEAT_AT] + [
         f"{k}_at{v}" for k, v in ARRAY_FEAT_AT.items() if v]
     return F, C
@@ -228,6 +238,81 @@ def _analytic_feats(run_dir):
         run_dir, _ANALYTIC["recon"], _ANALYTIC["cfg"], _ANALYTIC["figs"])
 
 
+def _bundle_derived(run_dir):
+    """The bundle's recorded render-time derived_config ({} if absent).
+
+    Reads manifest.json directly rather than importing param_persist: this
+    module is run against a toolkit path and must not require the project's
+    sweep modules to be importable. Delegating would be cleaner but couples the
+    classifier to param_persist for a two-line read.
+    """
+    man = Path(run_dir) / "manifest.json"
+    try:
+        with open(man) as f:
+            m = json.load(f)
+    except Exception:
+        return {}
+    dc = m.get("derived_config")
+    return dict(dc) if isinstance(dc, dict) else {}
+
+
+DERIVED_MATCH = "match"
+DERIVED_CONFLICT = "conflict"
+DERIVED_UNKNOWN = "unknown"
+
+# Absolute tolerance for comparing recorded floats. These are config constants
+# written and re-read as JSON/CSV, not measurements, so this only absorbs
+# float-repr round-tripping -- it is not a "close enough" allowance.
+_DERIVED_TOL = 1e-9
+
+
+def _derived_verdict(recorded, current):
+    """Three-state comparison of render-time vs measure-time derived config.
+
+    Returns DERIVED_MATCH / DERIVED_CONFLICT / DERIVED_UNKNOWN.
+
+    Three states rather than a boolean, for the same reason the corpus gate has
+    three: a bundle written before ``derived_config`` existed carries no record,
+    and "no record" is NOT agreement. A boolean would force that case to be
+    either a false conflict (blocking every legacy bundle) or a false match
+    (silently accepting a window mismatch, which is the failure this whole
+    change exists to prevent). Callers gate on ``== DERIVED_MATCH``, so UNKNOWN
+    is refused alongside CONFLICT unless explicitly allowed.
+
+    Only ``lead_in_s`` is compared. ``lfp_span`` cannot be: it is a RENDER-time
+    quantity with no measure-time counterpart -- this process reads the stored
+    PNG rather than redrawing it, so there is no current value to disagree with.
+    It is recorded for audit, and a span change is caught by re-rendering, not
+    here.
+    """
+    if not recorded:
+        return DERIVED_UNKNOWN
+    rec = recorded.get("lead_in_s")
+    if rec is None:
+        return DERIVED_UNKNOWN
+    try:
+        if abs(float(rec) - float(current)) <= _DERIVED_TOL:
+            return DERIVED_MATCH
+    except (TypeError, ValueError):
+        return DERIVED_UNKNOWN
+    return DERIVED_CONFLICT
+
+
+def _measure_lead_in():
+    """The lead-in this process will use for ANALYTIC features.
+
+    Read from the same cfg object ``_analytic_feats`` hands to
+    ``AF.extract``, which resolves ``cfg.LEAD_IN_S`` at call time -- so this
+    reports what is actually in force, not what the config file says on disk.
+    Returns None when the analytic path is unavailable (no arrays.npz anywhere,
+    older sweeps): there is then no measure-time window to compare.
+    """
+    cfg = _ANALYTIC.get("cfg")
+    if cfg is None:
+        return None
+    return float(getattr(cfg, "LEAD_IN_S", 0.0))
+
+
 def classify_run(run_dir, cname, seed, F, C):
     """Extract + classify one run. Returns a full master row dict, or None if
     the figure pair is missing."""
@@ -265,6 +350,17 @@ def classify_run(run_dir, cname, seed, F, C):
     row["rule"] = verdict["rule"]
     row["clause"] = verdict["clause"]
     row["review"] = 1 if verdict["label"] == -1 else 0
+
+    # Derived-config provenance. Recorded whether or not it agrees -- the row
+    # carries the evidence and `run` decides what to do about it, so a refusal
+    # is auditable rather than a bare count.
+    rec = _bundle_derived(run_dir)
+    meas = _measure_lead_in()
+    row["lfp_span_render"] = rec.get("lfp_span", "")
+    row["lead_in_s_render"] = rec.get("lead_in_s", "")
+    row["lead_in_s_measure"] = "" if meas is None else meas
+    row["derived_verdict"] = (DERIVED_UNKNOWN if meas is None
+                              else _derived_verdict(rec, meas))
     return row
 
 
@@ -284,7 +380,7 @@ def _write_csv(csv_path, rows_by_id):
 
 
 def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=True,
-        overrides=None):
+        overrides=None, allow_config_drift=False):
     F, C = _load_toolkit(toolkit_dir)
     csv_path = Path(csv_path)
 
@@ -326,6 +422,11 @@ def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=Tr
     all_runs = list(_iter_runs(out_root))
     n_total = len(all_runs)
     done = skipped = missing = 0
+    # Rows whose render-time and measure-time derived config disagree (or cannot
+    # be confirmed to agree). COUNTED, not silently dropped: a bare skip would
+    # make a partly-measured corpus look like a smaller clean one, which is the
+    # same failure mode as dropping unscorable runs from a rate.
+    drift = {}
     for i, (cname, seed, rd) in enumerate(all_runs, 1):
         rid = f"seed{seed:03d}__{cname}"
         if rid in rows and not force:
@@ -335,6 +436,19 @@ def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=Tr
         if row is None:
             missing += 1
             continue
+        # DERIVED-CONFIG GATE. The features in this row are measured from two
+        # sources under two windows: pixel features from the stored lfp.png
+        # (drawn at sweep time) and analytic features from arrays.npz (measured
+        # now). If the lead-in differs between those moments the row mixes them,
+        # and the effect is not cosmetic -- amp_prominence moves 1.482 -> 1.091
+        # on a reference bundle between 0.0 s and 1.0 s, straddling
+        # TH['SPIKE_AMP_MIN'] = 1.0. Refuse rather than record a row whose label
+        # no single configuration would have produced. Gate on == MATCH so
+        # UNKNOWN is refused too; --allow-config-drift downgrades to a warning.
+        dv = row.get("derived_verdict")
+        if dv != DERIVED_MATCH and not allow_config_drift:
+            drift.setdefault(dv or DERIVED_UNKNOWN, []).append(rid)
+            continue
         rows[rid] = row
         done += 1
         if done % flush_every == 0:
@@ -342,6 +456,31 @@ def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=Tr
             if verbose:
                 print(f"[{i}/{n_total}] classified={done} skipped={skipped} "
                       f"missing_figs={missing}", flush=True)
+
+    # Refusal report BEFORE the write, so a run that refused everything cannot
+    # leave a fresh CSV that looks like a successful classification.
+    if drift:
+        n_ref = sum(len(v) for v in drift.values())
+        print(f"REFUSED {n_ref} run(s) on derived-config drift "
+              f"(measure-time lead_in_s = {_measure_lead_in()!r}):")
+        for state, ids in sorted(drift.items()):
+            ex = ", ".join(ids[:4]) + (" ..." if len(ids) > 4 else "")
+            print(f"  {state}: {len(ids)} -- {ex}")
+        print("  'conflict' = the bundle was RENDERED under a different lead_in_s "
+              "than this process measures with; its pixel and analytic features "
+              "would not share a window.\n"
+              "  'unknown'  = the bundle predates derived_config in the manifest, "
+              "so agreement cannot be CONFIRMED (absence of a record is not a "
+              "match).\n"
+              "  Fix by restoring the config the bundle was rendered under, or "
+              "re-render the bundles under the current config. Pass "
+              "--allow-config-drift to record these rows anyway (the per-row "
+              "*_render / *_measure / derived_verdict columns keep the evidence).")
+        if not rows:
+            raise SystemExit(
+                "REFUSING to write: every run was refused on derived-config "
+                f"drift ({n_ref} run(s)); no rows would be classified. Leaving "
+                f"{csv_path} untouched.")
 
     _write_csv(csv_path, rows)
 
@@ -389,6 +528,12 @@ if __name__ == "__main__":
                     help="human_overrides.csv ledger; when given, human verdicts "
                          "are stamped onto the master as a final idempotent pass "
                          "(see apply_overrides.py). Omit for the pristine auto-only master.")
+    ap.add_argument("--allow-config-drift", action="store_true",
+                    help="record rows whose render-time and measure-time derived "
+                         "config disagree (or cannot be confirmed to agree) "
+                         "instead of refusing them. The per-row *_render / "
+                         "*_measure / derived_verdict columns are written either "
+                         "way; this only decides whether such rows are KEPT.")
     args = ap.parse_args()
     run(args.out_root, args.toolkit, args.csv, force=args.force,
-        overrides=args.overrides)
+        overrides=args.overrides, allow_config_drift=args.allow_config_drift)

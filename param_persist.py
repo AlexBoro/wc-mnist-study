@@ -99,6 +99,67 @@ def bundle_fingerprint(out_root, config_name, seed, arm="") -> str:
     return str(fp.get("hash", "")) if isinstance(fp, dict) else str(fp)
 
 
+def derived_config(cfg) -> dict:
+    """Config values that shape DERIVED products rather than the simulation.
+
+    These are deliberately NOT in ``PE.model_fingerprint``.  The fingerprint
+    answers "is this the same model?", and ``is_complete`` recomputes a run whose
+    fingerprint disagrees -- so folding a render/measurement knob into it would
+    mark an entire corpus stale and re-simulate ~18 GB of trajectories to change
+    a picture.  Nothing about the dynamics or ``arrays.npz`` depends on either
+    value.
+
+    They still need recording, because they change the LABEL a run receives:
+
+    * ``lfp_span`` scales the LFP figure.  Too small a span CLIPS the trace, and
+      12 of the classifier's 13 inputs are pixel-derived from ``lfp.png`` -- a
+      clipped figure mislabels the run.  (Recalibrated 150 -> 240 in bc58019.)
+    * ``lead_in_s`` drops the opening window before features are measured.
+      Measured effect on one reference bundle: ``amp_prominence`` 1.482 -> 1.091
+      in sequential_noH going from 0.0 s to 1.0 s, which straddles
+      ``TH['SPIKE_AMP_MIN'] = 1.0`` -- i.e. it flips the epileptiform gate.
+
+    The subtlety this block does NOT solve on its own: both values are read at
+    TWO different times -- here at render time (pixel features come from the
+    stored ``lfp.png``) and again at classify time (analytic features are
+    measured from ``arrays.npz`` by ``analytic_features.extract``, which
+    inherits ``cfg.LEAD_IN_S`` at call time).  A config edit between the sweep
+    and a later re-classification leaves the two halves of one feature row
+    measured under different windows, with nothing in the bundle to show it.
+    Recording the render-time values here is what makes that detectable:
+    ``classify_runs`` re-reads the same keys and refuses on disagreement.
+    """
+    return dict(
+        lfp_span=float(getattr(cfg, "LFP_SPAN", float("nan"))),
+        lead_in_s=float(getattr(cfg, "LEAD_IN_S", 0.0)),
+        output_average_window=float(getattr(cfg, "OUTPUT_AVERAGE_WINDOW", float("nan"))),
+        image_duration=float(getattr(cfg, "IMAGE_DURATION", float("nan"))),
+        # "recorded" = read from the live config as the figures were drawn.
+        # backfill_derived_config.py writes "reconstructed" instead, because a
+        # value INFERRED for an old bundle (from its git_commit) must never be
+        # indistinguishable from one that was actually observed -- that
+        # distinction is the whole point of recording these at all.
+        source="recorded",
+    )
+
+
+def bundle_derived_config(out_root, config_name, seed, arm="") -> dict:
+    """The ``derived_config`` recorded in an existing bundle ({} if absent).
+
+    Empty dict means UNKNOWN, not "matches" -- bundles written before this block
+    existed carry no record, and callers must treat that as its own state rather
+    than as agreement.  See ``classify_runs._derived_verdict``.
+    """
+    man = run_dir(out_root, config_name, seed, arm) / "manifest.json"
+    try:
+        with open(man) as f:
+            m = json.load(f)
+    except Exception:
+        return {}
+    dc = m.get("derived_config")
+    return dict(dc) if isinstance(dc, dict) else {}
+
+
 def _png_usable(p) -> bool:
     """True iff p is a PNG that was written to completion.
 
@@ -278,6 +339,11 @@ def save_bundle(out_root, result: PE.ExplorationResult, code_tag="",
         dt=float(cfg.DT), N=int(result.params["N"]),
         num_output=int(result.params["num_output"]),
         mnist_input_scale=float(cfg.MNIST_INPUT_SCALE),
+        # Render/measurement knobs that shape DERIVED products (figures,
+        # features) but NOT the simulation -- see derived_config().  Recorded
+        # here, at render time, so a later re-classification under a different
+        # config is detectable rather than silent.
+        derived_config=derived_config(cfg),
         record_T=int(result.E_traj.shape[0]),
         arrays_dtype=str(result.E_traj.dtype),
         runtime_s=result.runtime_s,
