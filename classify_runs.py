@@ -415,6 +415,17 @@ def run(out_root, toolkit_dir, csv_path, force=False, flush_every=25, verbose=Tr
                   f"scratch if this file might be from another sweep.")
         for r in existing:
             rows[r["run_id"]] = r
+        # Rows carried over from a CSV written before the derived-config gate
+        # existed have no verdict, and a BLANK cell must not read as agreement
+        # (the same trap _derived_verdict's three states exist to avoid). Say so:
+        # these rows keep whatever label they had, unchecked.
+        n_blank = sum(1 for r in existing if not r.get("derived_verdict"))
+        if n_blank:
+            print(f"NOTE {n_blank} resumed row(s) predate the derived-config gate "
+                  f"and carry no *_render/*_measure/derived_verdict values. Their "
+                  f"labels are kept as-is but their measurement window is NOT "
+                  f"confirmed -- a blank derived_verdict is 'unchecked', not "
+                  f"'match'. Pass --force to re-classify them under the gate.")
         if verbose:
             print(f"resuming: {len(rows)} rows already classified"
                   + (f" (corpus {file_corpus})" if file_corpus else ""))
