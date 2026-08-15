@@ -111,11 +111,52 @@ def shard_runs(runs: list[tuple[int, str]], shard: int, n_shards: int) -> list[t
     was equivalent.  Here the three configs have different costs (sequential_H
     carries an extra adaptation variable) and a contiguous block could land one
     shard with all the expensive runs.  Striding interleaves configs and seeds
-    so shards are cost-balanced and every shard covers all three configs.
+    so shards are cost-balanced.
+
+    CAVEAT (found 2026-08-15, was stated wrongly here before): striding does NOT
+    guarantee every shard covers all configs.  The run list is seed-major, so it
+    cycles through configs with period len(configs); when gcd(n_shards,
+    len(configs)) > 1 the stride locks onto that cycle and a shard collapses onto
+    a single config -- e.g. 3 configs with n_shards=3 gives shard 0 all-
+    simultaneous, shard 1 all-sequential_noH, shard 2 all-sequential_H.  That is
+    the worst loss pattern for a paired comparison: one dead container removes an
+    entire configuration across every seed, rather than costing each config
+    equally.  ``coverage_warning`` below detects it and main() prints it loudly.
+    Prefer an n_shards coprime with the config count (for 3 configs: 2, 4, 5).
     """
     if not (0 <= shard < n_shards):
         raise ValueError(f"shard {shard} out of range for n_shards {n_shards}")
     return runs[shard::n_shards]
+
+
+def coverage_warning(runs: list[tuple[int, str]], n_shards: int,
+                     config_names: list[str]) -> str | None:
+    """Return a warning if striding would give some shard less than full config
+    coverage, else None.  Checked across ALL shards, not just the one being run,
+    so a single shard's launch still surfaces a study-wide sharding mistake."""
+    if n_shards < 2 or len(config_names) < 2:
+        return None
+    thin = {}
+    for k in range(n_shards):
+        got = {c for _s, c in runs[k::n_shards]}
+        if len(got) < len(config_names):
+            thin[k] = sorted(got)
+    if not thin:
+        return None
+    # Suggest by TESTING each candidate, not from a rule.  Coprimality with the
+    # config count is necessary but not sufficient: a shard also needs at least
+    # len(configs) runs to hold them all, so with few runs a coprime n_shards can
+    # still produce a thin shard (9 runs / 4 shards -> 2-run shards).
+    ok = [n for n in range(2, len(runs) + 1)
+          if all(len({c for _s, c in runs[k::n]}) == len(config_names) for k in range(n))]
+    hint = (f" Shard counts with full coverage for this run list: "
+            f"{', '.join(map(str, ok))}." if ok else
+            " No shard count above 1 gives full coverage for this run list; "
+            "run it as a single shard.")
+    return ("sharding gives incomplete config coverage: "
+            + "; ".join(f"shard {k} only has {v}" for k, v in thin.items())
+            + "." + hint
+            + " One dead container would otherwise remove a whole configuration.")
 
 
 def split_workers(runs: list[tuple[int, str]], n_workers: int) -> list[list[tuple[int, str]]]:
@@ -357,6 +398,9 @@ def main() -> int:
         print(f"  w{k}: {len(c)} runs {[f's{s}/{n}' for s, n in c]}")
     print(f"ESTIMATED WALL: {est_h:.1f} h (deepest worker) -- "
           f"set the container timeout above this")
+    cov = coverage_warning(all_runs, args.n_shards, args.configs)
+    if cov:
+        print(f"[WARN] {cov}")
     if args.dry_run:
         return 0
     if not chunks:
