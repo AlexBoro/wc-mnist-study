@@ -32,13 +32,20 @@ RESULT (2026-08-15): STAGE 1 FAILED, AND THE FAILURE IS THE FINDING.
     scale 50 changes mean E by <=5%.  The simultaneous baseline is 0.0434 -- 12x
     above the sequential ceiling.
 
-    The cause is structural, not a gain problem.  compute_mnist_input(active_row=r)
-    drives ONLY that row: 28 of 784 neurons, 3.6% of the network, for ~9 ms
-    (image_duration/28) before moving on.  Network-wide mean E cannot be raised
-    to the simultaneous level by amplitude when 96.4% of the network is
-    undriven at any instant and each driven patch decays before the next
-    arrives.  Raising the amplitude past saturation only pins the driven row's
-    own sigmoid.
+    The cause is structural, not a gain problem -- but state it carefully: it is
+    NOT that sequential presentation loses input drive.  Summed over an image the
+    two modes deliver EXACTLY the same total (I_ext sum 544.14 both, all 28 rows
+    visited); the drive is time-distributed, not reduced.  What fails is
+    RECRUITMENT.  compute_mnist_input(active_row=r) drives 28 of 784 neurons for
+    row_duration = image_duration/28 = 8.9 ms, i.e. ~4-5 Euler steps at
+    dt = 0.002, while the excitatory time constant TAUPY is 10-80 ms.  A driven
+    patch therefore decays before the next row arrives rather than spreading, so
+    the population mean never rises even though individual driven units activate
+    fully.  Raising the amplitude past saturation only pins the driven row's own
+    sigmoid -- which is why both the network-wide and driven-subset curves
+    plateau.  Levers that could plausibly move this are recurrent (CeLoc/CeRem
+    scale), inhibitory quenching, alpha_H damping of the inter-row residue, or
+    row_duration itself -- not mnist_input_scale.
 
     CONSEQUENCE FOR THE CONFOUND: H1 and H2 are NOT separable via input scale.
     The low activity is not an incidental setting that happens to differ between
