@@ -132,10 +132,18 @@ def measure_mean_E(seed: int, config, n_images: int, data_root: str,
     short average that includes it is dominated by it (n=8 gave 0.0143, 5x the
     pilot's 256-image epoch-0 value of 0.0027), which would have calibrated the
     scale against a decaying initial condition rather than the activity the
-    network actually operates at.  Dropping 4 images costs seconds and removes
-    the whole effect: images 16-47 average 0.00233 and images 32-47 average
-    0.00232, i.e. settled.  run_experiment's own mean_E_activity includes the
-    transient but averages it over 256 images, so it dilutes to a few percent.
+    network actually operates at.
+
+    The default burn_in=4 is measured directly, not inferred from a neighbouring
+    window (seed 0, sequential_noH, 44-image span, varying only burn_in):
+        burn_in= 0 -> 0.004485      burn_in= 8 -> 0.002298
+        burn_in= 2 -> 0.002295      burn_in=16 -> 0.002360
+        burn_in= 4 -> 0.002306
+    Excluding no images nearly doubles the estimate, while anything from 2 to 16
+    lands within 3% of the same value: the estimate is flat in burn_in once the
+    first image or two is gone, and 4 sits inside that plateau at a cost of
+    seconds.  run_experiment's own mean_E_activity includes the transient but
+    averages it over 256 images, so it dilutes to a few percent.
     """
     import dataclasses
     if scale is not None:
