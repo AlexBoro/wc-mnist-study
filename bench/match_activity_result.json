@@ -1,0 +1,49 @@
+{
+  "seed": 0,
+  "images": 12,
+  "burn_in": 4,
+  "tol": 0.03,
+  "production_scale": 3.0,
+  "baseline_config": "simultaneous",
+  "target_mean_E": 0.043353625511129694,
+  "probe_epoch0": {
+    "simultaneous": 0.043353625511129694,
+    "sequential_noH": 0.0021800832049145053,
+    "sequential_H": 0.0021033764281504167
+  },
+  "pilot_epoch0_reference": {
+    "simultaneous": 0.0493,
+    "sequential_noH": 0.00274,
+    "sequential_H": 0.00272
+  },
+  "gap_probe": 19.886225174066173,
+  "gap_pilot": 17.99270072992701,
+  "arms": {
+    "sequential_noH": {
+      "ok": false,
+      "reason": "target outside bracket",
+      "bracket": [
+        0.5,
+        400.0
+      ],
+      "f_bracket": [
+        0.00020923390575141335,
+        0.0036047031884469715
+      ],
+      "target": 0.043353625511129694
+    },
+    "sequential_H": {
+      "ok": false,
+      "reason": "target outside bracket",
+      "bracket": [
+        0.5,
+        400.0
+      ],
+      "f_bracket": [
+        0.0001657025006522114,
+        0.0035581110619241373
+      ],
+      "target": 0.043353625511129694
+    }
+  }
+}
