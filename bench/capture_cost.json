@@ -1,0 +1,26 @@
+{
+  "A_no_capture": {
+    "total_s": 626.5,
+    "per_epoch_s": 156.625,
+    "arrays_bytes": 0,
+    "figures_bytes": 0
+  },
+  "B_arrays_only": {
+    "total_s": 596.15,
+    "per_epoch_s": 149.037,
+    "arrays_bytes": 0,
+    "figures_bytes": 0
+  },
+  "C_arrays_figs": {
+    "total_s": 604.3,
+    "per_epoch_s": 151.076,
+    "arrays_bytes": 102664250,
+    "figures_bytes": 1184026
+  },
+  "deltas": {
+    "arrays_overhead_s_per_epoch": -7.588,
+    "figures_overhead_s_per_epoch": 2.039,
+    "total_capture_overhead_s_per_epoch": -5.549,
+    "pct_of_no_capture": -3.5
+  }
+}

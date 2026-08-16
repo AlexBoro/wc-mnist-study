@@ -81,7 +81,11 @@ def main() -> int:
     tk = Path(args.toolkit).resolve()
     sys.path.insert(0, str(tk.parent))
     from labeling_toolkit.features import extract_features
-    from labeling_toolkit.classifier import classify, LABEL_NAMES
+    from labeling_toolkit.classifier import classify, LABEL_NAMES, SPIKE_AMP_FEATURE
+    import labeling_toolkit.analytic_features as AF
+    import wc_config as _cfg
+    import wc_figures as _WF
+    import wc_experiment as _X
 
     root = Path(args.root)
     runs = sorted(d for d in root.glob("seed*__*") if d.is_dir())
@@ -104,12 +108,38 @@ def main() -> int:
             feats = extract_features(str(heat), str(lfp),
                                      mean_E=_num(mrow, "mean_E_activity"),
                                      val_acc=_num(mrow, "val_acc"))
+            # ANALYTIC features from arrays.npz.  Load-bearing, not optional:
+            # classifier.SPIKE_AMP_FEATURE is "amp_prominence", and _spike_amp
+            # FALLS BACK to the pixel measure "spike_amp_max" when it is absent.
+            # Without this merge the Type 0/1 boundary is decided by the legacy
+            # pixel measure the user explicitly moved away from on 2026-08-12
+            # (slow drift can accumulate into an apparent spike there), and the
+            # fallback is silent -- the run looks fine and grades the wrong way.
+            #
+            # epoch_reconstructor (NOT param_render._reconstruct_connectivity)
+            # supplies the TRAINED CSR stored in the bundle; the seed-based
+            # reconstructor would rebuild the connectivity the run STARTED with,
+            # which is wrong for a trained epoch.
+            ab = ep_dir.parent.parent / "arrays" / ep_dir.name
+            analytic_ok, analytic_err = False, ""
+            if (ab / "arrays.npz").exists() and (ab / "manifest.json").exists():
+                try:
+                    feats.update(AF.extract(ab, _X.epoch_reconstructor(ab), _cfg, _WF))
+                    analytic_ok = True
+                except Exception as e:                      # recorded, never silent
+                    analytic_err = f"{type(e).__name__}: {e}"
+            else:
+                analytic_err = "no arrays bundle"
             v = classify(feats)
             out = dict(run=rd.name, config=rd.name.split("__", 1)[1],
                        seed=int(rd.name[4:7]), epoch=epoch,
                        label=v["label"], label_name=v["label_name"],
                        confidence=v["confidence"], rule=v["rule"], clause=v["clause"],
                        review=int(v["label"] == -1),
+                       # provenance of the amplitude that decided Type 0/1
+                       analytic_ok=int(analytic_ok), analytic_err=analytic_err,
+                       spike_amp_source=(SPIKE_AMP_FEATURE if feats.get(SPIKE_AMP_FEATURE)
+                                         is not None else "spike_amp_max[FALLBACK]"),
                        mean_E_activity=_num(mrow, "mean_E_activity"),
                        val_acc=_num(mrow, "val_acc"),
                        bias_e=_num(mrow, "bias_e"), bias_i=_num(mrow, "bias_i"),
@@ -141,6 +171,15 @@ def main() -> int:
     print(f"\ngraded {len(rows)} (run, epoch) pairs across {len(runs)} runs")
     for lab in sorted(dist, key=lambda x: (x == -1, x)):
         print(f"  {LABEL_NAMES[lab]:<24} {dist[lab]:>4}")
+    # Amplitude provenance: a silent fallback to the pixel measure would change
+    # the Type 0/1 boundary, so it is reported rather than left to inspection.
+    n_fb = sum(1 for r in rows if r["spike_amp_source"] != SPIKE_AMP_FEATURE)
+    print(f"\nanalytic features attached: {sum(r['analytic_ok'] for r in rows)}/{len(rows)}")
+    if n_fb:
+        print(f"[warn] {n_fb} row(s) fell back to the pixel amplitude measure "
+              f"instead of {SPIKE_AMP_FEATURE}:")
+        for r in [r for r in rows if r["spike_amp_source"] != SPIKE_AMP_FEATURE][:5]:
+            print(f"    {r['run']} epoch {r['epoch']}: {r['analytic_err'] or 'feature absent'}")
     if skipped:
         print(f"\n[warn] {len(skipped)} capture epoch(s) lacked a figure pair:")
         for s in skipped[:10]:

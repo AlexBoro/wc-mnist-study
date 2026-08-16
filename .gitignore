@@ -31,3 +31,8 @@ safeside/
 # Benchmark / smoke-test scratch (regenerate from bench/*.py)
 bench/smoke_out/
 bench/*_out/
+
+# benchmark/test run trees (multi-MB arrays; regenerate with bench/*.py)
+bench/cap_*/
+bench/dec_*/
+bench/*_out/

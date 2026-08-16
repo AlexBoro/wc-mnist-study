@@ -442,6 +442,15 @@ class ExperimentConfig:
     # fixes it OFF so the eval/train protocol is identical across runs (§4).
     pulsed_stimuli: bool = False
 
+    # ---- Activity capture cadence ----
+    # How often the E/I window is retained and written (arrays + figures).
+    # SEPARATE from topo_track_interval on purpose: until 2026-08-16 a single
+    # expression served both, so "capture every epoch" also forced a topology
+    # measurement every epoch (~4x the topology cost) and "--no-figures"
+    # silently discarded the arrays as well.  Defaults to TOPO_TRACK_INTERVAL so
+    # existing runs and the completed 100-epoch study reproduce unchanged.
+    capture_interval: int = TOPO_TRACK_INTERVAL
+
     # ---- Topology trigger (§8) ----
     topo_track_interval: int = TOPO_TRACK_INTERVAL
     topo_smooth_window: int = TOPO_SMOOTH_WINDOW

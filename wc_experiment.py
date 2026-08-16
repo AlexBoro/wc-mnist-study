@@ -747,7 +747,18 @@ def run_experiment(seed: int, config: cfg.ExperimentConfig,
         # the predictable triggers (epoch 0 and scheduled).  Sign-flip-triggered
         # epochs still get topology + metrics, just no figures.  mean_E_activity
         # is computed every epoch regardless (GPU scalar accumulator).
-        will_capture = save_figures and (epoch == 0 or (epoch + 1) % config.topo_track_interval == 0)
+        # Capture cadence, arrays, and figures are three INDEPENDENT decisions.
+        # They used to be one expression --
+        #     will_capture = save_figures and (epoch == 0 or (epoch+1) % topo_track_interval == 0)
+        # -- which had two consequences worth not reintroducing: save_figures=False
+        # silently suppressed the ARRAYS too (the scientific record depended on the
+        # rendering of it), and the cadence was welded to the topology schedule, so
+        # capturing every epoch also forced topology every epoch.
+        capture_now = (epoch == 0 or (epoch + 1) % config.capture_interval == 0)
+        save_arrays_now = bool(config.save_activity_arrays and capture_now)
+        save_figs_now = bool(save_figures and capture_now)
+        # The activity buffer is needed if EITHER consumer wants it.
+        will_capture = save_arrays_now or save_figs_now
         train_loss, train_acc, E_window, I_window, t_window, mean_E_activity = _train_one_epoch(
             model, train_loader, optimizer, criterion, config, state, capture_activity=will_capture
         )
@@ -853,7 +864,7 @@ def run_experiment(seed: int, config: cfg.ExperimentConfig,
         # its initial connectivity would silently mis-measure the thing the study
         # is about.  Use wc_experiment.epoch_reconstructor(epoch_dir) as the
         # `reconstruct_connectivity` argument to extract().
-        if config.save_activity_arrays and will_capture and E_window.size:
+        if save_arrays_now and E_window.size:
             ep_dir = run_dir / "arrays" / f"epoch_{epoch:04d}"
             ep_dir.mkdir(parents=True, exist_ok=True)
             # Stimulus onsets on the same absolute axis as t_window: images are
@@ -900,7 +911,7 @@ def run_experiment(seed: int, config: cfg.ExperimentConfig,
                 print(f"  [warn] activity-array save failed at epoch {epoch}: {e}")
 
         # Figures on captured (epoch 0 + scheduled) epochs (§12)
-        if will_capture and E_window.size:
+        if save_figs_now and E_window.size:
             import wc_figures as figs
             import scipy.sparse as _sp
             epoch_fig_dir = fig_dir / f"epoch_{epoch:04d}"
