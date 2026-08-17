@@ -233,8 +233,21 @@ sys.path.insert(0, spec["code_dir"])
 
 import torch
 torch.set_num_threads(1)
+import dataclasses
 import wc_config as cfg
 from wc_experiment import run_experiment
+
+def _mk(cname):
+    """Config for one run, with the capture cadence applied if requested.
+
+    capture_interval is SEPARATE from topo_track_interval (see wc_config): setting
+    it here changes only how often activity is saved, leaving the topology
+    schedule alone.  None means leave the config default.
+    """
+    c = cfg.make_config(cname)
+    if spec.get("capture_interval"):
+        c = dataclasses.replace(c, capture_interval=int(spec["capture_interval"]))
+    return c
 
 ok, failed = 0, []
 for seed, cname in spec["runs"]:
@@ -242,7 +255,7 @@ for seed, cname in spec["runs"]:
     print(f"[w] START seed={seed} config={cname}", flush=True)
     try:
         res = run_experiment(
-            seed, cfg.make_config(cname),
+            seed, _mk(cname),
             n_epochs=spec["epochs"],
             resume=True,                       # the whole point: survive a kill
             out_root=spec["out_root"],
@@ -280,6 +293,7 @@ def launch_worker(k: int, runs: list[tuple[int, str]], args, log_dir: Path):
         "epochs": args.epochs,
         "topology": args.topology,
         "figures": not args.no_figures,
+        "capture_interval": args.capture_interval,
     }
     src = log_dir / f"worker_{k}.py"
     src.write_text(WORKER_SRC)
@@ -347,6 +361,12 @@ def main() -> int:
                          "requested, not from nproc (unreliable on Modal)")
     ap.add_argument("--epochs", type=int, default=None,
                     help="default: wc_config.NUM_EPOCHS")
+    ap.add_argument("--capture-interval", type=int, default=None,
+                    help="how often activity is saved: 1 = EVERY epoch, 4 = the "
+                         "config default. Independent of the topology schedule "
+                         "(--topology / topo_track_interval), so raising capture "
+                         "frequency does not raise topology cost. At float16 a "
+                         "bundle is ~9 MB, so 1 costs ~1.1 GB/run at 100 epochs.")
     ap.add_argument("--configs", nargs="*", default=None,
                     help="default: all three from wc_config.make_configs()")
     ap.add_argument("--data-root", default=None,
