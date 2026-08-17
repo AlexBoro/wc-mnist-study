@@ -40,6 +40,26 @@ import wc_model as M
 CHECKPOINT_VERSION = "v82_longitudinal"
 TRAIN_HEATMAP_WINDOW = 10.0   # seconds of E/I activity retained per epoch (figures)
 
+# Storage dtype for the E/I trajectories inside arrays.npz.  float16 halves the
+# bundle: E_traj+I_traj are 31.4 MB of a 32.8 MB uncompressed bundle (the embedded
+# trained connectivity is only 1.38 MB), so this is what makes every-epoch capture
+# affordable -- 100 captures x 30 runs drops from ~90 GB to ~45 GB.
+#
+# VERIFIED SAFE FOR THE TAXONOMY (2026-08-16) on 27 real study bundles from
+# /vol/wc_mnist_study100 (3 per run x 9 runs, epochs 0/51/99): round-tripping the
+# trajectories through float16 and re-extracting amp_prominence gave 0 threshold
+# crossings, max relative error 1.3e-3, smallest margin to the 1.0 bar 0.1410
+# (a ~107x safety factor), and no change to the >=1.0 channel count in any bundle.
+# The amplitude distribution is strongly bimodal -- early epochs 0.57-1.14,
+# trained epochs 3.5-10.1 -- so only the earliest bundles come near the threshold
+# and even those clear it by 0.14.
+#
+# NOTE this affects STORAGE only.  The dynamics run in float32 and the figures are
+# rendered from the in-memory float32 window before this write, so nothing
+# upstream of the npz is quantized.  Set to np.float32 to revert; bundles carry
+# their own dtype, and readers cast to float, so mixed-dtype trees are readable.
+ARRAY_TRAJ_DTYPE = np.float16
+
 # Canonical Parquet column order (§7).  Kept explicit so the schema is stable.
 METRIC_COLUMNS = [
     # identity / config
@@ -879,8 +899,8 @@ def run_experiment(seed: int, config: cfg.ExperimentConfig,
             try:
                 np.savez_compressed(
                     ep_dir / "arrays.npz",
-                    E_traj=E_window.astype(np.float32),
-                    I_traj=I_window.astype(np.float32),
+                    E_traj=E_window.astype(ARRAY_TRAJ_DTYPE),
+                    I_traj=I_window.astype(ARRAY_TRAJ_DTYPE),
                     times=t_window.astype(np.float64),
                     stim_onsets=_onsets.astype(np.float64),
                     # trained, scaled connectivity as CSR triplets + LFP weights

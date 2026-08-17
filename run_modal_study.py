@@ -330,6 +330,16 @@ def main() -> int:
                          "so checkpoints survive a container timeout")
     ap.add_argument("--n-seeds", type=int, default=5)
     ap.add_argument("--seed-from", type=int, default=0)
+    ap.add_argument("--seeds", type=int, nargs="*", default=None,
+                    help="EXPLICIT seed list, overriding --n-seeds/--seed-from. "
+                         "Use this to run a randomly drawn seed set: the master "
+                         "RNG seed that produced the list belongs in the launch "
+                         "script so the set is reproducible rather than ad hoc. "
+                         "Note consecutive seeds are NOT biased -- over 200 "
+                         "consecutive seeds, corr(seed index, drawn bias_e) is "
+                         "-0.01 -- but a small consecutive BLOCK can still be "
+                         "unrepresentative by chance, which is what an explicit "
+                         "drawn set avoids.")
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--n-shards", type=int, default=1)
     ap.add_argument("--workers", type=int, default=8,
@@ -370,7 +380,16 @@ def main() -> int:
     log_dir = Path(args.log_dir) if args.log_dir else args.out_root / f"logs_shard{args.shard}"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    seeds = list(range(args.seed_from, args.seed_from + args.n_seeds))
+    if args.seeds:
+        # Explicit list wins. Sorted for a deterministic run order (so sharding
+        # and resume are reproducible) while leaving the SET itself as drawn --
+        # sorting reorders work, it does not select which seeds run.
+        seeds = sorted(set(args.seeds))
+        if len(seeds) != len(args.seeds):
+            print(f"[warn] --seeds had duplicates; using {len(seeds)} unique")
+    else:
+        seeds = list(range(args.seed_from, args.seed_from + args.n_seeds))
+    print(f"seeds ({len(seeds)}): {seeds}")
     all_runs = build_runs(seeds, args.configs)
     my_runs = shard_runs(all_runs, args.shard, args.n_shards)
     todo, n_skip = filter_done(args.out_root, my_runs, args.epochs)
