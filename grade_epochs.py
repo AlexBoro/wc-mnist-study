@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -132,7 +133,10 @@ def main() -> int:
                 analytic_err = "no arrays bundle"
             v = classify(feats)
             out = dict(run=rd.name, config=rd.name.split("__", 1)[1],
-                       seed=int(rd.name[4:7]), epoch=epoch,
+                       # delimiter-parsed, not run[4:7]: drawn seeds are 5-6
+                       # digits and the fixed slice truncated them (112464 -> 112)
+                       seed=int(re.match(r"seed(\d+)__", rd.name).group(1)),
+                       epoch=epoch,
                        label=v["label"], label_name=v["label_name"],
                        confidence=v["confidence"], rule=v["rule"], clause=v["clause"],
                        review=int(v["label"] == -1),

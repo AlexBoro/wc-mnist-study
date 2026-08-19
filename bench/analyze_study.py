@@ -47,6 +47,7 @@ import argparse
 import glob
 import json
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -66,7 +67,12 @@ def load_tree(root: str) -> pd.DataFrame:
         d = pd.read_csv(p)
         d["run"] = run
         d["config"] = run.split("__", 1)[1] if "__" in run else "unknown"
-        d["seed"] = int(run[4:7]) if run.startswith("seed") else -1
+        # Parse the seed by delimiter, not a fixed 3-char slice: the drawn seed
+        # sets are 5-6 digits (e.g. seed112464__sequential_H), which the old
+        # run[4:7] silently truncated to 112. Grouping is by run name so results
+        # were unaffected, but the reported seed was wrong.
+        _m = re.match(r"seed(\d+)__", run)
+        d["seed"] = int(_m.group(1)) if _m else -1
         frames.append(d)
     return pd.concat(frames, ignore_index=True)
 
