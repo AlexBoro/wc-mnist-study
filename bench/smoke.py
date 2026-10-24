@@ -1,7 +1,8 @@
 import os, sys, json, time
 for v in ("OMP_NUM_THREADS","MKL_NUM_THREADS","OPENBLAS_NUM_THREADS"): os.environ[v]="1"
-sys.path.insert(0,"~/dev/wc-mnist-study")
-os.environ.setdefault("WC_DATA_ROOT","~/dev/wc-mnist-study/mnist_data")
+_REPO = os.environ.get("WC_REPO", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, _REPO)
+os.environ.setdefault("WC_DATA_ROOT", os.path.join(_REPO, "mnist_data"))
 import torch; torch.set_num_threads(1)
 import numpy as np, dataclasses
 import wc_config as cfg, wc_experiment as X

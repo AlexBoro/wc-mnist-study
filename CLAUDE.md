@@ -7,7 +7,7 @@ change model dynamics (acceptance test A2 enforces this).
 
 ## Code sync — GitHub, not Drive (as of 14 Jul 2026)
 
-This folder is a **git repo** pushed to `github.com/AlexBoro/wc-mnist-study` (private).
+This folder is a **git repo** pushed to `github.com/AlexBoro/wc-mnist-study` (public).
 The notebook's **Step 3** clones / `reset --hard`s the repo to `/content/wc_mnist_code`
 each session (read-only PAT in Colab secret `GH_PAT`), so **code no longer lives on
 Drive** — only results do (`MyDrive/WC_MNIST_Longitudinal/`). Per-change loop: edit +

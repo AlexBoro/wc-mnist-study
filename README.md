@@ -252,3 +252,12 @@ not be bit-exact; the run logs `device` and `deterministic_ok`).
   carry-over is a wanted biological analogy (no reset — the next task starts from
   wherever the system currently is). Topology getting its own sample pool
   (analysis-only, no dynamics coupling) is still fine if ever needed.
+
+## Licensing
+
+| Part | Licence |
+|---|---|
+| Code (`.py`, `.sh`, notebooks) | MIT — see `LICENSE` |
+| Documentation and result/design tables (`.md`, `.csv`, `.json`, `.txt`) | CC BY 4.0 — see `LICENSE-docs` |
+
+MNIST is downloaded at run time and is not redistributed here.
